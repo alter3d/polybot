@@ -1,0 +1,25 @@
+{
+  "active": true,
+  "spec": "001-create-position-entry-monitoring",
+  "state": "building",
+  "subtasks": {
+    "completed": 2,
+    "total": 15,
+    "in_progress": 1,
+    "failed": 0
+  },
+  "phase": {
+    "current": "Project Setup",
+    "id": null,
+    "total": 3
+  },
+  "workers": {
+    "active": 0,
+    "max": 1
+  },
+  "session": {
+    "number": 3,
+    "started_at": "2026-01-09T01:35:52.249769"
+  },
+  "last_update": "2026-01-09T01:38:48.904960"
+}
