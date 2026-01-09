@@ -1,0 +1,34 @@
+{
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Read(./**)",
+      "Write(./**)",
+      "Edit(./**)",
+      "Glob(./**)",
+      "Grep(./**)",
+      "Read(/home/alter3d/git/polybot/**)",
+      "Write(/home/alter3d/git/polybot/**)",
+      "Edit(/home/alter3d/git/polybot/**)",
+      "Glob(/home/alter3d/git/polybot/**)",
+      "Grep(/home/alter3d/git/polybot/**)",
+      "Read(/home/alter3d/git/polybot/.auto-claude/specs/001-create-position-entry-monitoring/**)",
+      "Write(/home/alter3d/git/polybot/.auto-claude/specs/001-create-position-entry-monitoring/**)",
+      "Edit(/home/alter3d/git/polybot/.auto-claude/specs/001-create-position-entry-monitoring/**)",
+      "Bash(*)",
+      "WebFetch(*)",
+      "WebSearch(*)",
+      "mcp__context7__resolve-library-id(*)",
+      "mcp__context7__get-library-docs(*)",
+      "mcp__graphiti-memory__search_nodes(*)",
+      "mcp__graphiti-memory__search_facts(*)",
+      "mcp__graphiti-memory__add_episode(*)",
+      "mcp__graphiti-memory__get_episodes(*)",
+      "mcp__graphiti-memory__get_entity_edge(*)"
+    ]
+  }
+}
