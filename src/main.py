@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 """Main entry point for Polymarket position monitoring.
 
 This module provides the main monitoring loop that integrates all components:
