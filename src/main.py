@@ -929,6 +929,8 @@ def main() -> int:
         print("Configuration valid:")
         print(f"  Threshold: ${config.opportunity_threshold:.2f}")
         print(f"  Shares to trade: {config.shares_to_trade}")
+        print(f"  Trade amount USD: ${config.trade_amount_usd:.2f}")
+        print(f"  Auto trade enabled: {config.auto_trade_enabled}")
         print(f"  Monitor start: {config.monitor_start_minutes_before_end} min before end")
         print(f"  Series IDs: {', '.join(config.series_ids) if config.series_ids else '(none)'}")
         print(f"  CLOB host: {config.clob_host}")
