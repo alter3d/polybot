@@ -531,3 +531,155 @@ class TestGetCurrentEventForSeries:
         # Should prefer the one closing in the future
         assert result is not None
         assert result.id == "event2"
+
+
+class TestGetClosingTimeForEvent:
+    """Test get_closing_time_for_event() helper method.
+
+    This tests the public wrapper around _parse_market_closing_time() that provides
+    a clean API for extracting market closing times from event titles.
+    """
+
+    @pytest.fixture
+    def client(self) -> GammaClient:
+        """Create a GammaClient instance for testing."""
+        config = Config()
+        return GammaClient(config)
+
+    def test_get_closing_time_standard_format(self, client: GammaClient):
+        """Verify parsing standard event title format returns correct closing time."""
+        et_tz = ZoneInfo("America/New_York")
+        reference = datetime(2026, 1, 9, 19, 54, 0, tzinfo=et_tz).astimezone(timezone.utc)
+
+        title = "Bitcoin Up or Down - January 9, 8:15PM-8:30PM ET"
+        result = client.get_closing_time_for_event(title, reference)
+
+        assert result is not None
+        expected_et = datetime(2026, 1, 9, 20, 30, 0, tzinfo=et_tz)
+        expected_utc = expected_et.astimezone(timezone.utc)
+        assert result == expected_utc
+
+    def test_get_closing_time_am_format(self, client: GammaClient):
+        """Verify parsing AM time format returns correct closing time."""
+        et_tz = ZoneInfo("America/New_York")
+        reference = datetime(2026, 1, 9, 9, 30, 0, tzinfo=et_tz).astimezone(timezone.utc)
+
+        title = "Ethereum Up or Down - January 9, 9:45AM-10:00AM ET"
+        result = client.get_closing_time_for_event(title, reference)
+
+        assert result is not None
+        expected_et = datetime(2026, 1, 9, 10, 0, 0, tzinfo=et_tz)
+        expected_utc = expected_et.astimezone(timezone.utc)
+        assert result == expected_utc
+
+    def test_get_closing_time_midnight_boundary(self, client: GammaClient):
+        """Verify parsing midnight crossing (11:45PM-12:00AM) returns next day."""
+        et_tz = ZoneInfo("America/New_York")
+        reference = datetime(2026, 1, 9, 23, 50, 0, tzinfo=et_tz).astimezone(timezone.utc)
+
+        title = "Bitcoin Up or Down - January 9, 11:45PM-12:00AM ET"
+        result = client.get_closing_time_for_event(title, reference)
+
+        assert result is not None
+        # Expected: January 10, 2026 12:00AM ET (next day)
+        expected_et = datetime(2026, 1, 10, 0, 0, 0, tzinfo=et_tz)
+        expected_utc = expected_et.astimezone(timezone.utc)
+        assert result == expected_utc
+
+    def test_get_closing_time_noon_boundary(self, client: GammaClient):
+        """Verify parsing noon time (12:00PM) is handled correctly."""
+        et_tz = ZoneInfo("America/New_York")
+        reference = datetime(2026, 1, 9, 11, 50, 0, tzinfo=et_tz).astimezone(timezone.utc)
+
+        title = "Bitcoin Up or Down - January 9, 11:45AM-12:00PM ET"
+        result = client.get_closing_time_for_event(title, reference)
+
+        assert result is not None
+        expected_et = datetime(2026, 1, 9, 12, 0, 0, tzinfo=et_tz)
+        expected_utc = expected_et.astimezone(timezone.utc)
+        assert result == expected_utc
+
+    def test_get_closing_time_without_reference_date(self, client: GammaClient):
+        """Verify parsing works without explicit reference date parameter."""
+        title = "Bitcoin Up or Down - January 9, 8:15PM-8:30PM ET"
+
+        # Call without reference_date parameter - should use current time
+        result = client.get_closing_time_for_event(title)
+
+        # Should return a valid datetime in UTC
+        assert result is not None
+        assert result.tzinfo == timezone.utc
+
+    def test_get_closing_time_invalid_format_returns_none(self, client: GammaClient):
+        """Verify invalid event title format returns None."""
+        reference = datetime(2026, 1, 9, 20, 0, 0, tzinfo=timezone.utc)
+
+        # Title without proper time range format
+        title = "Bitcoin Up or Down - January 9"
+        result = client.get_closing_time_for_event(title, reference)
+
+        assert result is None
+
+    def test_get_closing_time_empty_title_returns_none(self, client: GammaClient):
+        """Verify empty title returns None."""
+        reference = datetime(2026, 1, 9, 20, 0, 0, tzinfo=timezone.utc)
+
+        result = client.get_closing_time_for_event("", reference)
+        assert result is None
+
+    def test_get_closing_time_none_title_returns_none(self, client: GammaClient):
+        """Verify None title returns None."""
+        reference = datetime(2026, 1, 9, 20, 0, 0, tzinfo=timezone.utc)
+
+        result = client.get_closing_time_for_event(None, reference)  # type: ignore
+        assert result is None
+
+    def test_get_closing_time_different_assets(self, client: GammaClient):
+        """Verify parsing works for different asset types in event titles."""
+        et_tz = ZoneInfo("America/New_York")
+        reference = datetime(2026, 1, 9, 15, 0, 0, tzinfo=et_tz).astimezone(timezone.utc)
+
+        test_cases = [
+            "Bitcoin Up or Down - January 9, 3:00PM-3:15PM ET",
+            "Ethereum Up or Down - January 9, 3:00PM-3:15PM ET",
+            "Solana Up or Down - January 9, 3:00PM-3:15PM ET",
+        ]
+
+        expected_et = datetime(2026, 1, 9, 15, 15, 0, tzinfo=et_tz)
+        expected_utc = expected_et.astimezone(timezone.utc)
+
+        for title in test_cases:
+            result = client.get_closing_time_for_event(title, reference)
+            assert result is not None, f"Failed to parse: {title}"
+            assert result == expected_utc, f"Wrong closing time for: {title}"
+
+    def test_get_closing_time_utc_conversion(self, client: GammaClient):
+        """Verify ET to UTC timezone conversion is correct."""
+        et_tz = ZoneInfo("America/New_York")
+        reference = datetime(2026, 1, 9, 15, 0, 0, tzinfo=et_tz).astimezone(timezone.utc)
+
+        title = "Bitcoin Up or Down - January 9, 3:00PM-3:15PM ET"
+        result = client.get_closing_time_for_event(title, reference)
+
+        assert result is not None
+        # Verify result is in UTC timezone
+        assert result.tzinfo == timezone.utc
+
+        # January 9, 2026 3:15PM ET = 8:15PM UTC (EST is UTC-5 in January)
+        expected_et = datetime(2026, 1, 9, 15, 15, 0, tzinfo=et_tz)
+        expected_utc = expected_et.astimezone(timezone.utc)
+        assert result == expected_utc
+
+    def test_get_closing_time_wraps_parse_market_closing_time(self, client: GammaClient):
+        """Verify get_closing_time_for_event correctly wraps _parse_market_closing_time."""
+        et_tz = ZoneInfo("America/New_York")
+        reference = datetime(2026, 1, 9, 19, 54, 0, tzinfo=et_tz).astimezone(timezone.utc)
+
+        title = "Bitcoin Up or Down - January 9, 8:15PM-8:30PM ET"
+
+        # Call both methods and verify they return the same result
+        public_result = client.get_closing_time_for_event(title, reference)
+        private_result = client._parse_market_closing_time(title, reference)
+
+        assert public_result == private_result
+        assert public_result is not None

@@ -715,6 +715,33 @@ class GammaClient:
         )
         return all_markets
 
+    def get_closing_time_for_event(
+        self, event_title: str, reference_date: datetime | None = None
+    ) -> datetime | None:
+        """Get the closing time for a market from its event title.
+
+        This is a public wrapper around _parse_market_closing_time() that provides
+        a clean API for extracting market closing times from event titles. Event
+        titles typically follow the format:
+        "[Asset] Up or Down - [Month Day], [StartTime]-[EndTime] ET"
+
+        Example:
+            >>> client = GammaClient(config)
+            >>> closing_time = client.get_closing_time_for_event(
+            ...     "Bitcoin Up or Down - January 9, 8:15PM-8:30PM ET"
+            ... )
+            >>> print(closing_time)  # datetime in UTC
+
+        Args:
+            event_title: The event title containing the time range.
+            reference_date: Optional reference datetime for inferring year.
+                           Defaults to current time if not provided.
+
+        Returns:
+            Parsed closing time in UTC, or None if parsing fails.
+        """
+        return self._parse_market_closing_time(event_title, reference_date)
+
     def _parse_iso_datetime(self, iso_str: str | None) -> datetime | None:
         """Parse an ISO datetime string to a datetime object.
 

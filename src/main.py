@@ -28,7 +28,7 @@ import logging
 import signal
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -109,6 +109,9 @@ class PolymarketMonitor:
 
         # Detected opportunities in current window
         self._window_opportunities: list[Opportunity] = []
+
+        # Market lifecycle tracking
+        self._current_market_closing_time: datetime | None = None
 
         # Register signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -205,6 +208,7 @@ class PolymarketMonitor:
                     "No markets found for current time in configured series: %s",
                     self._config.series_ids,
                 )
+                self._current_market_closing_time = None
                 return []
 
             logger.info(
@@ -212,6 +216,34 @@ class PolymarketMonitor:
                 len(markets),
                 len(self._config.series_ids),
             )
+
+            # Extract closing time from current events
+            # Find the soonest closing time across all monitored series
+            soonest_closing_time: datetime | None = None
+            for series_id in self._config.series_ids:
+                event = self._gamma_client.get_current_event_for_series(series_id)
+                if event:
+                    closing_time = self._gamma_client.get_closing_time_for_event(
+                        event.title
+                    )
+                    if closing_time:
+                        if soonest_closing_time is None or closing_time < soonest_closing_time:
+                            soonest_closing_time = closing_time
+                            logger.debug(
+                                "Series %s event '%s' closes at %s",
+                                series_id,
+                                event.title[:50],
+                                closing_time.strftime("%H:%M:%S UTC"),
+                            )
+
+            self._current_market_closing_time = soonest_closing_time
+            if soonest_closing_time:
+                logger.info(
+                    "Market closing time set to %s",
+                    soonest_closing_time.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                )
+            else:
+                logger.warning("Could not determine market closing time from events")
 
             # Log markets for visibility
             for market in markets[:5]:
@@ -360,6 +392,21 @@ class PolymarketMonitor:
                 return True
         return False
 
+    def _time_until_market_closes(self) -> timedelta:
+        """Calculate time remaining until the current market closes.
+
+        Returns:
+            Time until the current market's closing time. Returns timedelta(0)
+            if no closing time is set or the time has already passed.
+            Falls back to time_until_window_ends() if closing time is None.
+        """
+        if self._current_market_closing_time is None:
+            return time_until_window_ends()
+
+        now = datetime.now(timezone.utc)
+        remaining = self._current_market_closing_time - now
+        return remaining if remaining > timedelta(0) else timedelta(0)
+
     def _start_websocket(self, token_ids: list[str]) -> bool:
         """Start WebSocket connection and subscribe to tokens.
 
@@ -401,6 +448,117 @@ class PolymarketMonitor:
             self._websocket = None
             logger.info("WebSocket connection closed, ready for next window")
 
+    def _clear_market_state(self) -> None:
+        """Reset all per-market tracking state for market transition.
+
+        Clears all tracking data when transitioning between markets to ensure
+        no stale data from the previous market affects the next market's monitoring.
+        This includes price tracking, opportunity detection state, and market mappings.
+        """
+        logger.debug(
+            "Clearing market state: %d prices, %d bids, %d opportunities, "
+            "%d tokens, %d markets",
+            len(self._last_prices),
+            len(self._best_bids),
+            len(self._window_opportunities),
+            len(self._token_to_market),
+            len(self._active_markets),
+        )
+
+        self._last_prices.clear()
+        self._best_bids.clear()
+        self._window_opportunities.clear()
+        self._token_to_market.clear()
+        self._active_markets.clear()
+        self._current_market_closing_time = None
+
+        logger.info("Market state cleared for new market transition")
+
+    def _transition_to_next_market(self) -> bool:
+        """Execute the full market transition sequence.
+
+        Handles the complete transition from one market to the next:
+        1. Stop current WebSocket connection
+        2. Clear all market tracking state
+        3. Discover next available market
+        4. Start new WebSocket connection if market found
+
+        Returns:
+            True if successfully transitioned to a new market with active
+            WebSocket monitoring, False if no next market available.
+
+        Manual Verification Steps:
+            To verify this method works correctly during market transitions:
+
+            1. **Run with debug logging**::
+
+                LOG_LEVEL=DEBUG python -m src.main
+
+            2. **Expected log output during transition**::
+
+                # When transition begins:
+                INFO  | src.main | Transitioning to next market...
+                INFO  | src.main | Stopping WebSocket connection (market window ended)...
+                INFO  | src.main | WebSocket connection closed, ready for next window
+
+                # State cleanup (DEBUG level):
+                DEBUG | src.main | Clearing market state: N prices, N bids, N opportunities, N tokens, N markets
+                INFO  | src.main | Market state cleared for new market transition
+
+                # New market discovery:
+                INFO  | src.main | Discovered N markets from N series
+                DEBUG | src.main | Series XXX event 'Event Title...' closes at HH:MM:SS UTC
+                INFO  | src.main | Market closing time set to YYYY-MM-DD HH:MM:SS UTC
+
+                # On success:
+                INFO  | src.main | WebSocket started, subscribed to N tokens
+                INFO  | src.main | Successfully transitioned to next market - monitoring N markets with N tokens
+
+                # On failure (no next market):
+                WARNING | src.main | No next market available - waiting for next discovery opportunity
+
+            3. **What to observe**:
+                - WebSocket connection cleanly stops before new discovery
+                - All state counters go to 0 during clearing
+                - New market has different closing time than previous
+                - Token subscription count matches new market
+        """
+        logger.info("Transitioning to next market...")
+
+        # Step 1: Stop current WebSocket
+        self._stop_websocket()
+
+        # Step 2: Clear all market state
+        self._clear_market_state()
+
+        # Step 3: Discover next market
+        self._active_markets = self._discover_markets()
+        if not self._active_markets:
+            logger.warning(
+                "No next market available - waiting for next discovery opportunity"
+            )
+            return False
+
+        # Step 4: Build token mapping and start new WebSocket
+        self._build_token_mapping(self._active_markets)
+        token_ids = self._get_token_ids(self._active_markets)
+
+        if not token_ids:
+            logger.warning("No tokens found in discovered markets")
+            return False
+
+        if not self._start_websocket(token_ids):
+            logger.error("Failed to start WebSocket for next market")
+            return False
+
+        logger.info(
+            "Successfully transitioned to next market - monitoring %d markets "
+            "with %d tokens",
+            len(self._active_markets),
+            len(token_ids),
+        )
+        return True
+
     def _wait_for_monitoring_window(self) -> bool:
         """Wait until the monitoring window starts.
 
@@ -430,15 +588,90 @@ class PolymarketMonitor:
         return False
 
     def _monitor_window(self) -> None:
-        """Monitor for opportunities during the current window.
+        """Monitor for opportunities with continuous market lifecycle management.
 
-        Handles the full monitoring cycle for one 15-minute window:
-        1. Discover markets
-        2. Subscribe to WebSocket
-        3. Monitor until window ends
-        4. Clean up
+        Implements a continuous monitoring loop that automatically transitions
+        between markets as they close. The loop continues indefinitely until:
+        - Shutdown is requested (via signal or stop() call)
+        - No next market is available after retry timeout (30 seconds)
+
+        Market Lifecycle Flow:
+        1. Discover initial markets for current time
+        2. Subscribe to WebSocket for price updates
+        3. Monitor until market closing time is reached
+        4. When market closes:
+           a. Log "Market closed at [time]"
+           b. Call _transition_to_next_market()
+           c. If successful, continue monitoring the new market
+           d. If no next market, retry with backoff up to 30s timeout
+        5. Exit only on shutdown or after exhausting retries
+
+        Manual Verification Steps:
+            To verify market lifecycle behavior end-to-end:
+
+            1. **Run with debug logging**::
+
+                LOG_LEVEL=DEBUG python -m src.main
+
+               Or with explicit series::
+
+                SERIES_IDS=abc123,def456 LOG_LEVEL=DEBUG python -m src.main
+
+            2. **Expected log output during normal operation**::
+
+                # Initial startup:
+                INFO  | src.main | Starting Polymarket Monitor...
+                INFO  | src.main | Discovered N markets from N series
+                DEBUG | src.main | Series XXX event 'Bitcoin Up or Down - Jan 10, 8:15PM-8:30PM ET' closes at 01:30:00 UTC
+                INFO  | src.main | Market closing time set to 2026-01-10 01:30:00 UTC
+                INFO  | src.main | WebSocket started, subscribed to N tokens
+                INFO  | src.main | Now monitoring market closing at 2026-01-10 01:30:00 UTC
+
+                # During monitoring (every ~1 second at DEBUG level):
+                DEBUG | src.main | Monitoring... N opportunities detected, Ns until market closes
+
+                # When market closes:
+                INFO  | src.main | Market closed at 2026-01-10 01:30:00 UTC
+                INFO  | src.main | Transitioning to next market...
+
+                # After successful transition:
+                INFO  | src.main | Successfully transitioned to next market - monitoring N markets with N tokens
+                INFO  | src.main | Now monitoring market closing at 2026-01-10 01:45:00 UTC
+
+            3. **Expected log output when no next market available**::
+
+                INFO  | src.main | Market closed at 2026-01-10 01:30:00 UTC
+                INFO  | src.main | Transitioning to next market...
+                WARNING | src.main | No next market available - will retry for up to 30s
+                DEBUG | src.main | Waiting for next market... (5s/30s elapsed)
+                DEBUG | src.main | Waiting for next market... (10s/30s elapsed)
+                ...
+                WARNING | src.main | No next market available after 30s timeout - exiting monitor loop
+
+            4. **What to observe during market transition**:
+                - Closing time in logs matches expected market end time (from event title)
+                - WebSocket cleanly disconnects before new market discovery
+                - New market's closing time is later than previous market
+                - No errors or warnings during normal transitions
+                - Opportunity count resets to 0 for each new market
+
+            5. **Key indicators of correct behavior**:
+                - Market closing times parsed from event titles (e.g., "8:30PM ET" -> 01:30 UTC)
+                - Continuous monitoring across multiple market periods
+                - State isolation: opportunities from previous market don't affect next
+                - Clean shutdown on Ctrl+C (SIGINT) with "Shutdown signal received"
+
+            6. **Troubleshooting**:
+                - If "Could not determine market closing time" appears, event title
+                  may not match expected format (check series configuration)
+                - If "No markets to monitor" appears, verify SERIES_IDS contains valid series
+                - For WebSocket issues, check network connectivity and API status
         """
-        # Get window timing
+        # Retry configuration for when no next market is immediately available
+        MAX_RETRY_WAIT_SECONDS = 30
+        RETRY_INTERVAL_SECONDS = 5
+
+        # Get window timing for initial notification
         _, window_end = get_current_market_window()
 
         # Reset window state
@@ -449,7 +682,7 @@ class PolymarketMonitor:
         # Notify window start
         self._notifier.notify_window_start(window_end)
 
-        # Discover markets
+        # Discover initial markets
         self._active_markets = self._discover_markets()
         if not self._active_markets:
             logger.warning("No markets to monitor, waiting for next window")
@@ -468,45 +701,93 @@ class PolymarketMonitor:
             logger.error("Failed to start WebSocket monitoring")
             return
 
-        try:
-            # Monitor until window ends
-            while not self._shutdown_requested:
-                remaining = time_until_window_ends()
+        # Log initial market closing time
+        if self._current_market_closing_time:
+            logger.info(
+                "Now monitoring market closing at %s",
+                self._current_market_closing_time.strftime("%Y-%m-%d %H:%M:%S UTC"),
+            )
 
-                if remaining.total_seconds() <= 0:
+        # Continuous market lifecycle loop
+        while not self._shutdown_requested:
+            remaining = self._time_until_market_closes()
+
+            if remaining.total_seconds() <= 0:
+                # Market has closed - log and transition
+                closed_at = self._current_market_closing_time
+                if closed_at:
                     logger.info(
-                        "Market window ended - stopping monitoring for this window"
+                        "Market closed at %s",
+                        closed_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    )
+                else:
+                    logger.info("Market closing time reached")
+
+                # Notify window end and log summary for this market
+                self._notifier.notify_window_end()
+                if self._window_opportunities:
+                    logger.info(
+                        "Market window complete: %d opportunities detected",
+                        len(self._window_opportunities),
+                    )
+                else:
+                    self._notifier.notify_no_opportunities()
+
+                # Attempt transition to next market with retry logic
+                retry_elapsed = 0
+                transition_success = False
+
+                while retry_elapsed < MAX_RETRY_WAIT_SECONDS and not self._shutdown_requested:
+                    if self._transition_to_next_market():
+                        transition_success = True
+                        # Log new market closing time
+                        if self._current_market_closing_time:
+                            logger.info(
+                                "Now monitoring market closing at %s",
+                                self._current_market_closing_time.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                            )
+                        # Update window timing for notification
+                        _, window_end = get_current_market_window()
+                        self._notifier.notify_window_start(window_end)
+                        break
+
+                    # No next market available - wait and retry
+                    if retry_elapsed == 0:
+                        logger.warning(
+                            "No next market available - will retry for up to %ds",
+                            MAX_RETRY_WAIT_SECONDS,
+                        )
+
+                    logger.debug(
+                        "Waiting for next market... (%ds/%ds elapsed)",
+                        retry_elapsed,
+                        MAX_RETRY_WAIT_SECONDS,
+                    )
+                    time.sleep(RETRY_INTERVAL_SECONDS)
+                    retry_elapsed += RETRY_INTERVAL_SECONDS
+
+                if not transition_success and not self._shutdown_requested:
+                    logger.warning(
+                        "No next market available after %ds timeout - exiting monitor loop",
+                        MAX_RETRY_WAIT_SECONDS,
                     )
                     break
 
-                # Update status periodically
-                logger.debug(
-                    "Monitoring... %d opportunities detected, %.0fs remaining",
-                    len(self._window_opportunities),
-                    remaining.total_seconds(),
-                )
+                continue  # Start monitoring the new market
 
-                # Sleep briefly to avoid busy-waiting
-                time.sleep(1.0)
-
-        finally:
-            # Clean up WebSocket - ensures complete shutdown before next window
-            self._stop_websocket()
-
-        # Notify window end
-        self._notifier.notify_window_end()
-        logger.info(
-            "Window monitoring complete. Will discover new markets for next window."
-        )
-
-        # Summary for this window
-        if self._window_opportunities:
-            logger.info(
-                "Window complete: %d opportunities detected",
+            # Update status periodically while monitoring
+            logger.debug(
+                "Monitoring... %d opportunities detected, %.0fs until market closes",
                 len(self._window_opportunities),
+                remaining.total_seconds(),
             )
-        else:
-            self._notifier.notify_no_opportunities()
+
+            # Sleep briefly to avoid busy-waiting
+            time.sleep(1.0)
+
+        # Clean up WebSocket on exit
+        self._stop_websocket()
+        logger.info("Market monitoring loop exited")
 
     def run(self) -> None:
         """Run the main monitoring loop.
