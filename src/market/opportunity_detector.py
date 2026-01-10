@@ -13,6 +13,10 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Track (market_id, source) pairs that have already triggered an opportunity alert.
+# First detection logs at INFO level, subsequent detections log at DEBUG to reduce spam.
+_alerted_opportunities: set[tuple[str, str]] = set()
+
 
 @dataclass
 class Opportunity:
@@ -110,12 +114,22 @@ def detect_opportunity(
             source="bid",
         )
         opportunities.append(opp)
-        logger.info(
-            "Opportunity detected: bid price $%.2f >= threshold $%.2f for %s",
-            bid_price,
-            threshold,
-            market_id,
-        )
+        alert_key = (market_id, "bid")
+        if alert_key in _alerted_opportunities:
+            logger.debug(
+                "Opportunity detected: bid price $%.2f >= threshold $%.2f for %s",
+                bid_price,
+                threshold,
+                market_id,
+            )
+        else:
+            logger.info(
+                "Opportunity detected: bid price $%.2f >= threshold $%.2f for %s",
+                bid_price,
+                threshold,
+                market_id,
+            )
+            _alerted_opportunities.add(alert_key)
 
     # Check last trade price against threshold
     if _is_valid_price(last_trade_price) and last_trade_price >= threshold:
@@ -127,12 +141,22 @@ def detect_opportunity(
             source="last_trade",
         )
         opportunities.append(opp)
-        logger.info(
-            "Opportunity detected: last trade price $%.2f >= threshold $%.2f for %s",
-            last_trade_price,
-            threshold,
-            market_id,
-        )
+        alert_key = (market_id, "last_trade")
+        if alert_key in _alerted_opportunities:
+            logger.debug(
+                "Opportunity detected: last trade price $%.2f >= threshold $%.2f for %s",
+                last_trade_price,
+                threshold,
+                market_id,
+            )
+        else:
+            logger.info(
+                "Opportunity detected: last trade price $%.2f >= threshold $%.2f for %s",
+                last_trade_price,
+                threshold,
+                market_id,
+            )
+            _alerted_opportunities.add(alert_key)
 
     if not opportunities:
         logger.debug(
