@@ -11,9 +11,11 @@ identical other than the time period they cover.
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -706,6 +708,123 @@ class GammaClient:
 
         except (ValueError, TypeError) as e:
             logger.debug("Failed to parse datetime '%s': %s", iso_str, e)
+            return None
+
+    def _parse_market_closing_time(
+        self, event_title: str, reference_date: datetime | None = None
+    ) -> datetime | None:
+        """Parse the market closing time from an event title.
+
+        Event titles typically follow the format:
+        "[Asset] Up or Down - [Month Day], [StartTime]-[EndTime] ET"
+        Example: "Bitcoin Up or Down - January 9, 8:15PM-8:30PM ET"
+
+        This method extracts the end time (closing time) from the time range.
+
+        Args:
+            event_title: The event title containing the time range.
+            reference_date: Optional reference datetime for inferring year.
+                           Defaults to current time if not provided.
+
+        Returns:
+            Parsed closing time in UTC, or None if parsing fails.
+        """
+        if not event_title:
+            return None
+
+        # Use current time as reference if not provided
+        if reference_date is None:
+            reference_date = datetime.now(timezone.utc)
+
+        try:
+            # Regex to extract: "Month Day, StartTime-EndTime ET"
+            # Examples:
+            #   "January 9, 8:15PM-8:30PM ET"
+            #   "December 31, 11:45PM-12:00AM ET"
+            pattern = r"(\w+)\s+(\d{1,2}),\s*(\d{1,2}):(\d{2})(AM|PM)-(\d{1,2}):(\d{2})(AM|PM)\s*ET"
+            match = re.search(pattern, event_title, re.IGNORECASE)
+
+            if not match:
+                logger.debug(
+                    "Could not extract time range from event title: '%s'",
+                    event_title[:100],
+                )
+                return None
+
+            # Extract matched groups
+            month_name = match.group(1)
+            day = int(match.group(2))
+            # Start time groups: 3, 4, 5 (hour, minute, am/pm)
+            # End time groups: 6, 7, 8 (hour, minute, am/pm)
+            end_hour = int(match.group(6))
+            end_minute = int(match.group(7))
+            end_ampm = match.group(8).upper()
+
+            # Convert 12-hour to 24-hour format
+            if end_ampm == "PM" and end_hour != 12:
+                end_hour += 12
+            elif end_ampm == "AM" and end_hour == 12:
+                end_hour = 0
+
+            # Parse month name to number
+            month_map = {
+                "january": 1, "february": 2, "march": 3, "april": 4,
+                "may": 5, "june": 6, "july": 7, "august": 8,
+                "september": 9, "october": 10, "november": 11, "december": 12,
+            }
+            month = month_map.get(month_name.lower())
+            if month is None:
+                logger.debug("Invalid month name '%s' in event title", month_name)
+                return None
+
+            # Determine year from reference date
+            # If the parsed month/day would be more than 6 months in the past,
+            # assume it's for the next year
+            year = reference_date.year
+            et_tz = ZoneInfo("America/New_York")
+
+            # Create datetime in ET timezone
+            closing_time_et = datetime(
+                year=year,
+                month=month,
+                day=day,
+                hour=end_hour,
+                minute=end_minute,
+                second=0,
+                tzinfo=et_tz,
+            )
+
+            # Handle midnight boundary: if end time is 12:00AM, it's the next day
+            # Check if start time > end time (e.g., 11:45PM-12:00AM)
+            start_hour = int(match.group(3))
+            start_ampm = match.group(5).upper()
+            if start_ampm == "PM" and start_hour != 12:
+                start_hour += 12
+            elif start_ampm == "AM" and start_hour == 12:
+                start_hour = 0
+
+            if start_hour > end_hour or (start_hour == 23 and end_hour == 0):
+                # End time is on the next day
+                closing_time_et = closing_time_et + timedelta(days=1)
+
+            # Convert to UTC
+            closing_time_utc = closing_time_et.astimezone(timezone.utc)
+
+            logger.debug(
+                "Parsed closing time from '%s': %s ET -> %s UTC",
+                event_title[:50],
+                closing_time_et.strftime("%Y-%m-%d %H:%M %Z"),
+                closing_time_utc.strftime("%Y-%m-%d %H:%M %Z"),
+            )
+
+            return closing_time_utc
+
+        except (ValueError, TypeError, AttributeError) as e:
+            logger.debug(
+                "Failed to parse market closing time from '%s': %s",
+                event_title[:100],
+                e,
+            )
             return None
 
     def _parse_event(self, raw: dict[str, Any], series_id: str = "") -> Event:
