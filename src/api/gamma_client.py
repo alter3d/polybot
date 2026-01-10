@@ -595,18 +595,21 @@ class GammaClient:
             return []
 
     def get_current_event_for_series(self, series_id: str) -> Event | None:
-        """Find the event whose time period covers the current time.
+        """Find the event whose market closing time is closest to now.
 
         For a given series, this method finds the event that:
-        1. Has a start_date before or equal to now
-        2. Has an end_date after now
-        3. Is not closed
+        1. Has a market closing time (parsed from title) within 15 minutes of now
+        2. Is not closed
+        3. Has the closest closing time to current time
+
+        This ensures we select the market that is about to close soon rather than
+        a future market whose event validity window happens to overlap with now.
 
         Args:
             series_id: The series identifier to query.
 
         Returns:
-            The Event covering the current time, or None if not found.
+            The Event with closing time closest to now (within 15 min), or None if not found.
         """
         events = self.get_events_by_series(series_id)
         if not events:
@@ -614,37 +617,72 @@ class GammaClient:
             return None
 
         now = datetime.now(timezone.utc)
+        max_closing_window = timedelta(minutes=15)
+
+        # Collect events with valid closing times within the 15-minute window
+        candidates: list[tuple[Event, datetime, timedelta]] = []
 
         for event in events:
-            # Parse start and end dates
-            start_time = self._parse_iso_datetime(event.start_date_iso)
-            end_time = self._parse_iso_datetime(event.end_date_iso)
+            # Parse closing time from the event title
+            closing_time = self._parse_market_closing_time(event.title, now)
 
-            if start_time is None or end_time is None:
+            if closing_time is None:
                 logger.debug(
-                    "Event %s has invalid dates (start=%s, end=%s)",
+                    "Event %s: could not parse closing time from title '%s'",
                     event.id,
-                    event.start_date_iso,
-                    event.end_date_iso,
+                    event.title[:50],
                 )
                 continue
 
-            # Check if current time is within the event's time period
-            if start_time <= now <= end_time:
-                logger.info(
-                    "Found current event for series %s: %s (%s - %s)",
-                    series_id,
-                    event.title[:50],
-                    event.start_date_iso,
-                    event.end_date_iso,
-                )
-                return event
+            # Calculate time until closing (can be negative if just closed)
+            time_to_close = closing_time - now
 
-        logger.warning(
-            "No event found covering current time for series %s",
+            # Check if closing time is within 15 minutes of now
+            # Accept events closing soon (positive) or just closed (small negative)
+            if timedelta(minutes=-2) <= time_to_close <= max_closing_window:
+                candidates.append((event, closing_time, time_to_close))
+                logger.debug(
+                    "Event %s is a candidate: closes at %s (in %s)",
+                    event.id,
+                    closing_time.strftime("%H:%M:%S UTC"),
+                    time_to_close,
+                )
+            else:
+                logger.debug(
+                    "Event %s skipped: closes at %s (delta %s outside window)",
+                    event.id,
+                    closing_time.strftime("%H:%M:%S UTC"),
+                    time_to_close,
+                )
+
+        if not candidates:
+            logger.warning(
+                "No event found with closing time within 15 minutes for series %s",
+                series_id,
+            )
+            return None
+
+        # Select the event with closing time closest to (but preferably after) now
+        # Sort by time_to_close: prefer positive values (closing soon) over negative (just closed)
+        # Then by absolute distance to now
+        def sort_key(item: tuple[Event, datetime, timedelta]) -> tuple[int, float]:
+            _, _, delta = item
+            # Prefer events closing in the future (priority 0) over past (priority 1)
+            priority = 0 if delta >= timedelta(0) else 1
+            # Then sort by absolute distance to now
+            return (priority, abs(delta.total_seconds()))
+
+        candidates.sort(key=sort_key)
+        selected_event, closing_time, time_to_close = candidates[0]
+
+        logger.info(
+            "Selected event for series %s: %s (closes at %s, in %s)",
             series_id,
+            selected_event.title[:50],
+            closing_time.strftime("%H:%M:%S UTC"),
+            time_to_close,
         )
-        return None
+        return selected_event
 
     def get_current_markets_for_series(self, series_ids: list[str]) -> list[Market]:
         """Find all markets from events that cover the current time.
