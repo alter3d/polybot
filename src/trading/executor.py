@@ -159,7 +159,11 @@ class TradeExecutor(BaseNotifier):
         Raises:
             Exception: If client initialization or credential derivation fails.
         """
-        logger.debug("Initializing authenticated CLOB client")
+        logger.debug(
+            "Initializing authenticated CLOB client (signature_type=%d, funder_address=%s)",
+            self._config.signature_type,
+            "set" if self._config.funder_address else "not set",
+        )
 
         # Build client kwargs - funder is required for signature_type=1 (Magic wallet)
         client_kwargs = {
@@ -175,6 +179,19 @@ class TradeExecutor(BaseNotifier):
             logger.debug(
                 "Using funder address for Magic wallet: %s",
                 self._config.funder_address[:10] + "..." if len(self._config.funder_address) > 10 else self._config.funder_address
+            )
+        elif self._config.signature_type == 1:
+            # signature_type=1 but no funder_address - this should have been caught earlier
+            # but log a warning just in case
+            logger.warning(
+                "SIGNATURE_TYPE=1 (Magic wallet) but FUNDER_ADDRESS is empty - this may cause signature errors"
+            )
+        elif self._config.funder_address:
+            # funder_address is set but signature_type is not 1 - user may have misconfigured
+            logger.warning(
+                "FUNDER_ADDRESS is configured but SIGNATURE_TYPE=%d (not 1/Magic). "
+                "If you're using a Magic wallet, set SIGNATURE_TYPE=1",
+                self._config.signature_type,
             )
 
         self._client = ClobClient(**client_kwargs)
