@@ -117,6 +117,79 @@ class TestTradeExecutorInit:
         executor = TradeExecutor(config)
         assert not executor.is_enabled
 
+    def test_init_disabled_when_signature_type_1_without_funder(self):
+        """Verify executor is disabled when signature_type=1 but funder_address is empty."""
+        config = Config(
+            auto_trade_enabled=True,
+            private_key="test_key",
+            trade_amount_usd=20.0,
+            signature_type=1,
+            funder_address="",  # Missing funder address
+        )
+        executor = TradeExecutor(config)
+        assert not executor.is_enabled
+
+    @patch("src.trading.executor.ClobClient")
+    def test_init_enabled_with_signature_type_1_and_funder(self, mock_clob_client):
+        """Verify executor is enabled when signature_type=1 with funder_address."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
+        mock_clob_client.return_value = mock_client_instance
+
+        config = Config(
+            auto_trade_enabled=True,
+            private_key="test_private_key",
+            trade_amount_usd=20.0,
+            signature_type=1,
+            funder_address="0xfunder1234567890abcdef1234567890abcdef1234",
+        )
+        executor = TradeExecutor(config)
+        assert executor.is_enabled
+
+    @patch("src.trading.executor.ClobClient")
+    def test_init_passes_funder_to_clob_client_for_signature_type_1(self, mock_clob_client):
+        """Verify funder parameter is passed to ClobClient when signature_type=1."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
+        mock_clob_client.return_value = mock_client_instance
+
+        funder_address = "0xfunder1234567890abcdef1234567890abcdef1234"
+        config = Config(
+            auto_trade_enabled=True,
+            private_key="test_private_key",
+            trade_amount_usd=20.0,
+            signature_type=1,
+            funder_address=funder_address,
+        )
+        TradeExecutor(config)
+
+        # Verify ClobClient was called with funder parameter
+        mock_clob_client.assert_called_once()
+        call_kwargs = mock_clob_client.call_args[1]
+        assert "funder" in call_kwargs
+        assert call_kwargs["funder"] == funder_address
+
+    @patch("src.trading.executor.ClobClient")
+    def test_init_no_funder_for_signature_type_0(self, mock_clob_client):
+        """Verify funder parameter is NOT passed for signature_type=0 (EOA)."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
+        mock_clob_client.return_value = mock_client_instance
+
+        config = Config(
+            auto_trade_enabled=True,
+            private_key="test_private_key",
+            trade_amount_usd=20.0,
+            signature_type=0,  # EOA wallet type
+            funder_address="0xsome_address",  # Should be ignored
+        )
+        TradeExecutor(config)
+
+        # Verify ClobClient was called WITHOUT funder parameter
+        mock_clob_client.assert_called_once()
+        call_kwargs = mock_clob_client.call_args[1]
+        assert "funder" not in call_kwargs
+
     def test_init_stores_config(self):
         """Verify executor stores the configuration."""
         config = Config(auto_trade_enabled=False)

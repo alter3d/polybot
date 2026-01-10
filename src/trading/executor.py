@@ -118,6 +118,13 @@ class TradeExecutor(BaseNotifier):
             )
             return
 
+        # For signature_type=1 (Magic wallet), funder_address is required
+        if config.signature_type == 1 and not config.funder_address:
+            logger.warning(
+                "SIGNATURE_TYPE=1 requires FUNDER_ADDRESS - trading disabled"
+            )
+            return
+
         if config.trade_amount_usd <= 0:
             logger.error(
                 "Invalid trade amount: $%.2f - trading disabled",
@@ -146,17 +153,31 @@ class TradeExecutor(BaseNotifier):
         Creates the client with wallet credentials and derives
         API credentials for order submission.
 
+        When signature_type=1 (Magic wallet), the funder parameter is required
+        for proper signature validation.
+
         Raises:
             Exception: If client initialization or credential derivation fails.
         """
         logger.debug("Initializing authenticated CLOB client")
 
-        self._client = ClobClient(
-            host=self._config.clob_host,
-            key=self._config.private_key,
-            chain_id=POLYGON,
-            signature_type=self._config.signature_type,
-        )
+        # Build client kwargs - funder is required for signature_type=1 (Magic wallet)
+        client_kwargs = {
+            "host": self._config.clob_host,
+            "key": self._config.private_key,
+            "chain_id": POLYGON,
+            "signature_type": self._config.signature_type,
+        }
+
+        # Add funder parameter when using Magic wallet (signature_type=1)
+        if self._config.signature_type == 1 and self._config.funder_address:
+            client_kwargs["funder"] = self._config.funder_address
+            logger.debug(
+                "Using funder address for Magic wallet: %s",
+                self._config.funder_address[:10] + "..." if len(self._config.funder_address) > 10 else self._config.funder_address
+            )
+
+        self._client = ClobClient(**client_kwargs)
 
         # CRITICAL: Must derive and set API credentials before trading
         logger.debug("Deriving API credentials")

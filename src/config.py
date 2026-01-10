@@ -19,6 +19,7 @@ class Config:
         auto_trade_enabled: Enable automatic trade execution (default: False)
         private_key: Wallet private key for signing transactions (default: empty)
         signature_type: Wallet signature type - 0=EOA, 1=Magic, 2=Browser (default: 0)
+        funder_address: Funder address required when signature_type=1 (Magic wallet) (default: empty)
         monitor_start_minutes_before_end: Minutes before window end to start monitoring (default: 3)
         clob_host: CLOB API endpoint
         gamma_host: Gamma API endpoint for market discovery
@@ -36,6 +37,7 @@ class Config:
     auto_trade_enabled: bool = False  # Enable automatic trade execution
     private_key: str = ""  # Wallet private key for signing transactions
     signature_type: int = 0  # Wallet type: 0=EOA, 1=Magic, 2=Browser
+    funder_address: str = ""  # Funder address for SIGNATURE_TYPE=1 (Magic wallet)
 
     # Timing parameters
     monitor_start_minutes_before_end: int = 3  # Start monitoring 3 min before window end
@@ -63,6 +65,7 @@ class Config:
             AUTO_TRADE_ENABLED: Enable automatic trade execution (default: false)
             PRIVATE_KEY: Wallet private key for signing transactions (default: empty)
             SIGNATURE_TYPE: Wallet type - 0=EOA, 1=Magic, 2=Browser (default: 0)
+            FUNDER_ADDRESS: Funder address required when SIGNATURE_TYPE=1 (default: empty)
             MONITOR_START_MINUTES: Minutes before window end to start monitoring (default: 3)
             LOG_LEVEL: Logging verbosity (default: INFO)
             SERIES_IDS: Comma-separated list of Polymarket series IDs to monitor
@@ -85,6 +88,7 @@ class Config:
             auto_trade_enabled=auto_trade_enabled,
             private_key=environ.get("PRIVATE_KEY", ""),
             signature_type=int(environ.get("SIGNATURE_TYPE", "0")),
+            funder_address=environ.get("FUNDER_ADDRESS", ""),
             monitor_start_minutes_before_end=int(environ.get("MONITOR_START_MINUTES", "3")),
             log_level=environ.get("LOG_LEVEL", "INFO"),
             series_ids=series_ids,

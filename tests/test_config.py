@@ -74,6 +74,11 @@ class TestConfigDefaults:
         config = Config()
         assert config.signature_type == 0
 
+    def test_default_funder_address_empty(self):
+        """Verify funder_address is empty string by default."""
+        config = Config()
+        assert config.funder_address == ""
+
 
 class TestConfigFromEnv:
     """Test environment variable configuration loading."""
@@ -242,6 +247,23 @@ class TestConfigFromEnv:
             assert config.private_key == "0xdeadbeef"
             assert config.signature_type == 1
 
+    def test_from_env_funder_address_override(self):
+        """Verify FUNDER_ADDRESS env var overrides default."""
+        with patch.dict(os.environ, {"FUNDER_ADDRESS": "0x1234567890abcdef1234567890abcdef12345678"}, clear=True):
+            config = Config.from_env()
+            assert config.funder_address == "0x1234567890abcdef1234567890abcdef12345678"
+
+    def test_from_env_funder_address_with_signature_type_1(self):
+        """Verify FUNDER_ADDRESS with SIGNATURE_TYPE=1 for Magic wallet."""
+        env_vars = {
+            "SIGNATURE_TYPE": "1",
+            "FUNDER_ADDRESS": "0xfunder1234567890abcdef1234567890abcdef1234",
+        }
+        with patch.dict(os.environ, env_vars, clear=True):
+            config = Config.from_env()
+            assert config.signature_type == 1
+            assert config.funder_address == "0xfunder1234567890abcdef1234567890abcdef1234"
+
 
 class TestConfigDataclass:
     """Test Config dataclass behavior."""
@@ -293,6 +315,15 @@ class TestConfigDataclass:
         assert config.auto_trade_enabled is True
         assert config.private_key == "0xabc123"
         assert config.signature_type == 2
+
+    def test_config_custom_funder_address(self):
+        """Verify Config can be instantiated with custom funder_address."""
+        config = Config(
+            signature_type=1,
+            funder_address="0xfunder1234567890abcdef",
+        )
+        assert config.signature_type == 1
+        assert config.funder_address == "0xfunder1234567890abcdef"
 
     def test_config_equality(self):
         """Verify two Config instances with same values are equal."""
@@ -400,3 +431,10 @@ class TestConfigEdgeCases:
             assert config.auto_trade_enabled is False
             assert config.private_key == ""
             assert config.signature_type == 0
+            assert config.funder_address == ""
+
+    def test_from_env_funder_address_empty_string(self):
+        """Verify empty FUNDER_ADDRESS results in empty string."""
+        with patch.dict(os.environ, {"FUNDER_ADDRESS": ""}, clear=True):
+            config = Config.from_env()
+            assert config.funder_address == ""
