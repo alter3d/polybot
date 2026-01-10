@@ -790,3 +790,72 @@ class TestTradeExecutorIntegration:
         mock_client_instance.post_order.assert_called_once()
         call_args = mock_client_instance.post_order.call_args
         assert call_args[0][1] == mock_order_type.GTC
+
+    @patch("src.trading.executor.ClobClient")
+    @patch("src.trading.executor.PartialCreateOrderOptions")
+    def test_order_created_with_neg_risk_option(self, mock_options, mock_clob_client):
+        """Verify order is created with neg_risk option for negative risk markets."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
+        mock_client_instance.create_order.return_value = MagicMock()
+        mock_client_instance.post_order.return_value = {"orderID": "12345"}
+        mock_clob_client.return_value = mock_client_instance
+
+        config = Config(
+            auto_trade_enabled=True,
+            private_key="test_key",
+            trade_amount_usd=20.0,
+        )
+        executor = TradeExecutor(config)
+
+        # Create opportunity for a negative risk market
+        opportunity = Opportunity(
+            market_id="condition-12345",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+            token_id="test-clob-token-id",
+            neg_risk=True,
+        )
+        executor.notify(opportunity)
+
+        # Verify PartialCreateOrderOptions was called with neg_risk=True
+        mock_options.assert_called_once_with(neg_risk=True)
+
+        # Verify create_order was called with options
+        mock_client_instance.create_order.assert_called_once()
+        call_args = mock_client_instance.create_order.call_args
+        assert len(call_args[0]) == 2  # order_args and options
+
+    @patch("src.trading.executor.ClobClient")
+    @patch("src.trading.executor.PartialCreateOrderOptions")
+    def test_order_created_with_neg_risk_false(self, mock_options, mock_clob_client):
+        """Verify order is created with neg_risk=False for non-negative risk markets."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
+        mock_client_instance.create_order.return_value = MagicMock()
+        mock_client_instance.post_order.return_value = {"orderID": "12345"}
+        mock_clob_client.return_value = mock_client_instance
+
+        config = Config(
+            auto_trade_enabled=True,
+            private_key="test_key",
+            trade_amount_usd=20.0,
+        )
+        executor = TradeExecutor(config)
+
+        # Create opportunity for a non-negative risk market (default)
+        opportunity = Opportunity(
+            market_id="condition-12345",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+            token_id="test-clob-token-id",
+            neg_risk=False,
+        )
+        executor.notify(opportunity)
+
+        # Verify PartialCreateOrderOptions was called with neg_risk=False
+        mock_options.assert_called_once_with(neg_risk=False)

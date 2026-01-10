@@ -9,7 +9,7 @@ import time
 from typing import Optional
 
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import OrderArgs, OrderType
+from py_clob_client.clob_types import OrderArgs, OrderType, PartialCreateOrderOptions
 from py_clob_client.constants import POLYGON
 
 from src.config import Config
@@ -401,12 +401,13 @@ class TradeExecutor(BaseNotifier):
         token_display = token_id[:40] + "..." if len(token_id) > 40 else token_id
 
         logger.info(
-            "Executing trade: %s %s @ $%.2f (%.2f shares) for %s",
+            "Executing trade: %s %s @ $%.2f (%.2f shares) for %s (neg_risk=%s)",
             "BUY",
             opportunity.side,
             LIMIT_PRICE,
             shares,
             token_display,
+            opportunity.neg_risk,
         )
 
         # Attempt trade with retry logic for transient errors
@@ -414,7 +415,7 @@ class TradeExecutor(BaseNotifier):
 
         for attempt in range(1, MAX_RETRIES + 2):  # +2 because range is exclusive
             try:
-                return self._submit_order(token_id, shares)
+                return self._submit_order(token_id, shares, opportunity.neg_risk)
 
             except Exception as e:
                 # Categorize the error for proper handling
@@ -448,7 +449,7 @@ class TradeExecutor(BaseNotifier):
 
         return False
 
-    def _submit_order(self, token_id: str, shares: float) -> bool:
+    def _submit_order(self, token_id: str, shares: float, neg_risk: bool = False) -> bool:
         """Submit a limit order to the CLOB API.
 
         This is the core order submission logic, separated to allow
@@ -457,6 +458,7 @@ class TradeExecutor(BaseNotifier):
         Args:
             token_id: The token to trade.
             shares: Number of shares to purchase.
+            neg_risk: Whether this is a negative risk market.
 
         Returns:
             True if order was submitted successfully.
@@ -475,16 +477,21 @@ class TradeExecutor(BaseNotifier):
             side="BUY",
         )
 
-        # Create signed order
-        signed_order = self._client.create_order(order_args)
+        # Create order options with neg_risk flag
+        # This is CRITICAL for negative risk markets - without it, signature validation fails
+        order_options = PartialCreateOrderOptions(neg_risk=neg_risk)
+
+        # Create signed order with options
+        signed_order = self._client.create_order(order_args, order_options)
 
         # Submit order as Good-Til-Cancelled
         response = self._client.post_order(signed_order, OrderType.GTC)
 
         token_display = token_id[:40] + "..." if len(token_id) > 40 else token_id
         logger.info(
-            "Order submitted successfully for %s: %s",
+            "Order submitted successfully for %s (neg_risk=%s): %s",
             token_display,
+            neg_risk,
             response if response else "no response data",
         )
         return True

@@ -65,6 +65,7 @@ class Market:
         liquidity: Current liquidity in the market.
         tags: List of category tags associated with the market.
         enable_order_book: Whether order book trading is enabled.
+        neg_risk: Whether this is a negative risk market (requires special order handling).
     """
 
     id: str
@@ -81,6 +82,7 @@ class Market:
     liquidity: float = 0.0
     tags: list[str] = field(default_factory=list)
     enable_order_book: bool = False
+    neg_risk: bool = False
 
 
 @dataclass
@@ -1018,4 +1020,5 @@ class GammaClient:
             liquidity=liquidity,
             tags=tags,
             enable_order_book=bool(raw.get("enable_order_book", False)),
+            neg_risk=bool(raw.get("negRisk", False) or raw.get("neg_risk", False)),
         )

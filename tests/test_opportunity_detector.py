@@ -118,6 +118,29 @@ class TestOpportunityDataclass:
         opp2 = Opportunity("test2", "YES", 0.75, now, "last_trade")
         assert opp1 != opp2
 
+    def test_opportunity_neg_risk_default_false(self):
+        """Verify Opportunity neg_risk defaults to False."""
+        opp = Opportunity(
+            market_id="test",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+        )
+        assert opp.neg_risk is False
+
+    def test_opportunity_neg_risk_true(self):
+        """Verify Opportunity accepts neg_risk=True."""
+        opp = Opportunity(
+            market_id="test",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+            neg_risk=True,
+        )
+        assert opp.neg_risk is True
+
 
 class TestIsValidPrice:
     """Test _is_valid_price helper function."""
@@ -298,6 +321,27 @@ class TestDetectOpportunity:
         )
         assert len(opportunities) == 1
         assert opportunities[0].price == 1.0
+
+    def test_opportunity_neg_risk_passed_through(self):
+        """Verify neg_risk parameter is passed through to Opportunity."""
+        opportunities = detect_opportunity(
+            last_trade_price=0.75,
+            threshold=0.70,
+            market_id="btc-15min",
+            neg_risk=True,
+        )
+        assert len(opportunities) == 1
+        assert opportunities[0].neg_risk is True
+
+    def test_opportunity_neg_risk_default_false_in_function(self):
+        """Verify neg_risk defaults to False when not specified."""
+        opportunities = detect_opportunity(
+            last_trade_price=0.75,
+            threshold=0.70,
+            market_id="btc-15min",
+        )
+        assert len(opportunities) == 1
+        assert opportunities[0].neg_risk is False
 
 
 class TestDetectOpportunityThresholdVariations:

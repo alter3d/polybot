@@ -367,6 +367,7 @@ class PolymarketMonitor:
             threshold=self._config.opportunity_threshold,
             market_id=market.id,
             token_id=token_id,
+            neg_risk=market.neg_risk,
         )
 
         for opp in opportunities:
