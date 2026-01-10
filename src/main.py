@@ -59,6 +59,7 @@ from src.market.timing import (
     time_until_window_ends,
 )
 from src.notifications.console import ConsoleNotifier
+from src.trading.executor import TradeExecutor
 
 # Load environment variables from .env file
 load_dotenv()
@@ -98,6 +99,7 @@ class PolymarketMonitor:
         self._gamma_client: GammaClient | None = None
         self._websocket: MarketWebSocket | None = None
         self._notifier = ConsoleNotifier()
+        self._trade_executor = TradeExecutor(config)
 
         # Market tracking
         self._active_markets: list[Market] = []
