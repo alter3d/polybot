@@ -5,6 +5,7 @@ trades on detected opportunities via the Polymarket CLOB API.
 """
 
 import logging
+import time
 from typing import Optional
 
 from py_clob_client.client import ClobClient
@@ -16,6 +17,61 @@ from src.market.opportunity_detector import Opportunity
 from src.notifications.console import BaseNotifier
 
 logger = logging.getLogger(__name__)
+
+
+class TradeExecutionError(Exception):
+    """Base exception for trade execution errors."""
+
+    pass
+
+
+class InsufficientBalanceError(TradeExecutionError):
+    """Raised when wallet balance is insufficient for trade."""
+
+    pass
+
+
+class AllowanceError(TradeExecutionError):
+    """Raised when token allowance is not set or insufficient."""
+
+    pass
+
+
+class NetworkError(TradeExecutionError):
+    """Raised on network-related failures (timeout, connection issues)."""
+
+    pass
+
+
+class RateLimitError(TradeExecutionError):
+    """Raised when API rate limit is exceeded."""
+
+    pass
+
+
+class InvalidOrderError(TradeExecutionError):
+    """Raised when order parameters are invalid."""
+
+    pass
+
+
+class APIError(TradeExecutionError):
+    """Raised for general API errors with status codes."""
+
+    def __init__(self, message: str, status_code: Optional[int] = None) -> None:
+        """Initialize API error with optional status code.
+
+        Args:
+            message: Error description.
+            status_code: HTTP status code if available.
+        """
+        super().__init__(message)
+        self.status_code = status_code
+
+
+# Retry configuration for transient errors
+MAX_RETRIES = 1
+RETRY_DELAY_SECONDS = 1.0
 
 # Fixed limit price for all orders
 LIMIT_PRICE = 0.99
@@ -122,6 +178,165 @@ class TradeExecutor(BaseNotifier):
         """
         return amount_usd / LIMIT_PRICE
 
+    def _categorize_error(self, error: Exception) -> TradeExecutionError:
+        """Categorize an exception into a specific TradeExecutionError type.
+
+        Analyzes the error message and type to determine the appropriate
+        error category for proper handling and logging.
+
+        Args:
+            error: The original exception to categorize.
+
+        Returns:
+            A specific TradeExecutionError subclass instance.
+        """
+        error_msg = str(error).lower()
+        error_type = type(error).__name__
+
+        # Check for insufficient balance
+        if any(
+            keyword in error_msg
+            for keyword in ["insufficient", "balance", "not enough", "low balance"]
+        ):
+            return InsufficientBalanceError(
+                "Insufficient balance. Please deposit funds to your Polymarket wallet."
+            )
+
+        # Check for allowance issues
+        if any(
+            keyword in error_msg
+            for keyword in ["allowance", "approve", "approval", "not approved"]
+        ):
+            return AllowanceError(
+                "Token allowance required. Please approve token spending on Polymarket first."
+            )
+
+        # Check for rate limiting
+        if any(
+            keyword in error_msg
+            for keyword in ["rate limit", "too many requests", "throttl"]
+        ) or "429" in str(error):
+            return RateLimitError("API rate limit exceeded. Please wait before retrying.")
+
+        # Check for network issues
+        if any(
+            keyword in error_msg
+            for keyword in [
+                "timeout",
+                "timed out",
+                "network",
+                "connection",
+                "connect",
+                "unreachable",
+                "dns",
+                "socket",
+            ]
+        ) or error_type in ["TimeoutError", "ConnectionError", "OSError"]:
+            return NetworkError(f"Network error: {error}")
+
+        # Check for invalid order parameters
+        if any(
+            keyword in error_msg
+            for keyword in [
+                "invalid",
+                "bad request",
+                "validation",
+                "malformed",
+                "parameter",
+            ]
+        ):
+            return InvalidOrderError(f"Invalid order parameters: {error}")
+
+        # Check for HTTP status codes in error message
+        for status_code in [400, 401, 403, 404, 500, 502, 503, 504]:
+            if str(status_code) in str(error):
+                return APIError(str(error), status_code=status_code)
+
+        # Default to generic API error
+        return APIError(str(error))
+
+    def _is_retryable_error(self, error: TradeExecutionError) -> bool:
+        """Determine if an error is transient and should be retried.
+
+        Args:
+            error: The categorized error to check.
+
+        Returns:
+            True if the error is transient and may succeed on retry.
+        """
+        # Network errors and rate limits are typically transient
+        if isinstance(error, (NetworkError, RateLimitError)):
+            return True
+
+        # Some API errors (5xx) are transient
+        if isinstance(error, APIError) and error.status_code:
+            return error.status_code >= 500
+
+        return False
+
+    def _log_trade_error(
+        self, error: TradeExecutionError, token_id: str, attempt: int = 1
+    ) -> None:
+        """Log a trade error with appropriate severity and context.
+
+        Args:
+            error: The categorized trade execution error.
+            token_id: The token ID being traded.
+            attempt: Current retry attempt number.
+        """
+        token_display = token_id[:40] + "..." if len(token_id) > 40 else token_id
+
+        if isinstance(error, InsufficientBalanceError):
+            logger.error(
+                "Trade failed for %s - %s",
+                token_display,
+                str(error),
+            )
+        elif isinstance(error, AllowanceError):
+            logger.error(
+                "Trade failed for %s - %s",
+                token_display,
+                str(error),
+            )
+        elif isinstance(error, RateLimitError):
+            logger.warning(
+                "Trade for %s rate limited (attempt %d/%d): %s",
+                token_display,
+                attempt,
+                MAX_RETRIES + 1,
+                str(error),
+            )
+        elif isinstance(error, NetworkError):
+            logger.warning(
+                "Trade for %s network error (attempt %d/%d): %s",
+                token_display,
+                attempt,
+                MAX_RETRIES + 1,
+                str(error),
+            )
+        elif isinstance(error, InvalidOrderError):
+            logger.error(
+                "Trade failed for %s - %s",
+                token_display,
+                str(error),
+            )
+        elif isinstance(error, APIError):
+            status_info = (
+                f" (HTTP {error.status_code})" if error.status_code else ""
+            )
+            logger.error(
+                "Trade failed for %s - API error%s: %s",
+                token_display,
+                status_info,
+                str(error),
+            )
+        else:
+            logger.error(
+                "Trade failed for %s: %s",
+                token_display,
+                str(error),
+            )
+
     def _get_token_id_for_opportunity(self, opportunity: Opportunity) -> Optional[str]:
         """Extract the token ID from an opportunity.
 
@@ -143,7 +358,7 @@ class TradeExecutor(BaseNotifier):
         """Execute a trade for the given opportunity.
 
         Creates and submits a limit order at $0.99 for the configured
-        dollar amount.
+        dollar amount. Implements retry logic for transient errors.
 
         Args:
             opportunity: The opportunity to trade on.
@@ -164,57 +379,104 @@ class TradeExecutor(BaseNotifier):
 
         shares = self._calculate_shares(self._config.trade_amount_usd)
 
+        # Validate order parameters
+        if shares <= 0:
+            logger.error(
+                "Invalid share quantity: %.4f - trade aborted",
+                shares,
+            )
+            return False
+
+        token_display = token_id[:40] + "..." if len(token_id) > 40 else token_id
+
         logger.info(
             "Executing trade: %s %s @ $%.2f (%.2f shares) for %s",
             "BUY",
             opportunity.side,
             LIMIT_PRICE,
             shares,
-            token_id[:40] + "..." if len(token_id) > 40 else token_id,
+            token_display,
         )
 
-        try:
-            # Create order arguments
-            order_args = OrderArgs(
-                token_id=token_id,
-                price=LIMIT_PRICE,
-                size=shares,
-                side="BUY",
+        # Attempt trade with retry logic for transient errors
+        last_error: Optional[TradeExecutionError] = None
+
+        for attempt in range(1, MAX_RETRIES + 2):  # +2 because range is exclusive
+            try:
+                return self._submit_order(token_id, shares)
+
+            except Exception as e:
+                # Categorize the error for proper handling
+                categorized_error = self._categorize_error(e)
+                last_error = categorized_error
+
+                # Log the error with context
+                self._log_trade_error(categorized_error, token_id, attempt)
+
+                # Check if we should retry
+                if self._is_retryable_error(categorized_error) and attempt <= MAX_RETRIES:
+                    logger.info(
+                        "Retrying trade for %s in %.1f seconds...",
+                        token_display,
+                        RETRY_DELAY_SECONDS,
+                    )
+                    time.sleep(RETRY_DELAY_SECONDS)
+                    continue
+
+                # Non-retryable error or max retries exceeded
+                break
+
+        # All retries exhausted
+        if last_error and isinstance(last_error, (NetworkError, RateLimitError)):
+            logger.error(
+                "Trade for %s failed after %d attempts: %s",
+                token_display,
+                MAX_RETRIES + 1,
+                str(last_error),
             )
 
-            # Create signed order
-            signed_order = self._client.create_order(order_args)
+        return False
 
-            # Submit order as Good-Til-Cancelled
-            response = self._client.post_order(signed_order, OrderType.GTC)
+    def _submit_order(self, token_id: str, shares: float) -> bool:
+        """Submit a limit order to the CLOB API.
 
-            logger.info(
-                "Order submitted successfully: %s",
-                response if response else "no response data",
-            )
-            return True
+        This is the core order submission logic, separated to allow
+        for retry handling in _execute_trade.
 
-        except Exception as e:
-            error_msg = str(e).lower()
+        Args:
+            token_id: The token to trade.
+            shares: Number of shares to purchase.
 
-            # Handle common error cases with user-friendly messages
-            if "insufficient" in error_msg or "balance" in error_msg:
-                logger.error(
-                    "Trade failed - insufficient balance. "
-                    "Please deposit funds to your Polymarket wallet."
-                )
-            elif "allowance" in error_msg:
-                logger.error(
-                    "Trade failed - token allowance required. "
-                    "Please approve token spending on Polymarket first."
-                )
-            elif "timeout" in error_msg or "network" in error_msg:
-                logger.error("Trade failed - network error: %s", e)
-                # Could implement retry logic here
-            else:
-                logger.error("Trade execution failed: %s", e)
+        Returns:
+            True if order was submitted successfully.
 
-            return False
+        Raises:
+            Exception: Any error from the CLOB client.
+        """
+        if not self._client:
+            raise RuntimeError("CLOB client not initialized")
+
+        # Create order arguments
+        order_args = OrderArgs(
+            token_id=token_id,
+            price=LIMIT_PRICE,
+            size=shares,
+            side="BUY",
+        )
+
+        # Create signed order
+        signed_order = self._client.create_order(order_args)
+
+        # Submit order as Good-Til-Cancelled
+        response = self._client.post_order(signed_order, OrderType.GTC)
+
+        token_display = token_id[:40] + "..." if len(token_id) > 40 else token_id
+        logger.info(
+            "Order submitted successfully for %s: %s",
+            token_display,
+            response if response else "no response data",
+        )
+        return True
 
     def notify(self, opportunity: Opportunity) -> bool:
         """Execute a trade for a detected opportunity.

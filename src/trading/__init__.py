@@ -1,5 +1,23 @@
 """Trading execution services for Polymarket opportunities."""
 
-from src.trading.executor import TradeExecutor
+from src.trading.executor import (
+    AllowanceError,
+    APIError,
+    InsufficientBalanceError,
+    InvalidOrderError,
+    NetworkError,
+    RateLimitError,
+    TradeExecutionError,
+    TradeExecutor,
+)
 
-__all__ = ["TradeExecutor"]
+__all__ = [
+    "AllowanceError",
+    "APIError",
+    "InsufficientBalanceError",
+    "InvalidOrderError",
+    "NetworkError",
+    "RateLimitError",
+    "TradeExecutionError",
+    "TradeExecutor",
+]
