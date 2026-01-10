@@ -11,9 +11,11 @@ identical other than the time period they cover.
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -593,18 +595,21 @@ class GammaClient:
             return []
 
     def get_current_event_for_series(self, series_id: str) -> Event | None:
-        """Find the event whose time period covers the current time.
+        """Find the event whose market closing time is closest to now.
 
         For a given series, this method finds the event that:
-        1. Has a start_date before or equal to now
-        2. Has an end_date after now
-        3. Is not closed
+        1. Has a market closing time (parsed from title) within 15 minutes of now
+        2. Is not closed
+        3. Has the closest closing time to current time
+
+        This ensures we select the market that is about to close soon rather than
+        a future market whose event validity window happens to overlap with now.
 
         Args:
             series_id: The series identifier to query.
 
         Returns:
-            The Event covering the current time, or None if not found.
+            The Event with closing time closest to now (within 15 min), or None if not found.
         """
         events = self.get_events_by_series(series_id)
         if not events:
@@ -612,37 +617,72 @@ class GammaClient:
             return None
 
         now = datetime.now(timezone.utc)
+        max_closing_window = timedelta(minutes=15)
+
+        # Collect events with valid closing times within the 15-minute window
+        candidates: list[tuple[Event, datetime, timedelta]] = []
 
         for event in events:
-            # Parse start and end dates
-            start_time = self._parse_iso_datetime(event.start_date_iso)
-            end_time = self._parse_iso_datetime(event.end_date_iso)
+            # Parse closing time from the event title
+            closing_time = self._parse_market_closing_time(event.title, now)
 
-            if start_time is None or end_time is None:
+            if closing_time is None:
                 logger.debug(
-                    "Event %s has invalid dates (start=%s, end=%s)",
+                    "Event %s: could not parse closing time from title '%s'",
                     event.id,
-                    event.start_date_iso,
-                    event.end_date_iso,
+                    event.title[:50],
                 )
                 continue
 
-            # Check if current time is within the event's time period
-            if start_time <= now <= end_time:
-                logger.info(
-                    "Found current event for series %s: %s (%s - %s)",
-                    series_id,
-                    event.title[:50],
-                    event.start_date_iso,
-                    event.end_date_iso,
-                )
-                return event
+            # Calculate time until closing (can be negative if just closed)
+            time_to_close = closing_time - now
 
-        logger.warning(
-            "No event found covering current time for series %s",
+            # Check if closing time is within 15 minutes of now
+            # Accept events closing soon (positive) or just closed (small negative)
+            if timedelta(minutes=-2) <= time_to_close <= max_closing_window:
+                candidates.append((event, closing_time, time_to_close))
+                logger.debug(
+                    "Event %s is a candidate: closes at %s (in %s)",
+                    event.id,
+                    closing_time.strftime("%H:%M:%S UTC"),
+                    time_to_close,
+                )
+            else:
+                logger.debug(
+                    "Event %s skipped: closes at %s (delta %s outside window)",
+                    event.id,
+                    closing_time.strftime("%H:%M:%S UTC"),
+                    time_to_close,
+                )
+
+        if not candidates:
+            logger.warning(
+                "No event found with closing time within 15 minutes for series %s",
+                series_id,
+            )
+            return None
+
+        # Select the event with closing time closest to (but preferably after) now
+        # Sort by time_to_close: prefer positive values (closing soon) over negative (just closed)
+        # Then by absolute distance to now
+        def sort_key(item: tuple[Event, datetime, timedelta]) -> tuple[int, float]:
+            _, _, delta = item
+            # Prefer events closing in the future (priority 0) over past (priority 1)
+            priority = 0 if delta >= timedelta(0) else 1
+            # Then sort by absolute distance to now
+            return (priority, abs(delta.total_seconds()))
+
+        candidates.sort(key=sort_key)
+        selected_event, closing_time, time_to_close = candidates[0]
+
+        logger.info(
+            "Selected event for series %s: %s (closes at %s, in %s)",
             series_id,
+            selected_event.title[:50],
+            closing_time.strftime("%H:%M:%S UTC"),
+            time_to_close,
         )
-        return None
+        return selected_event
 
     def get_current_markets_for_series(self, series_ids: list[str]) -> list[Market]:
         """Find all markets from events that cover the current time.
@@ -706,6 +746,123 @@ class GammaClient:
 
         except (ValueError, TypeError) as e:
             logger.debug("Failed to parse datetime '%s': %s", iso_str, e)
+            return None
+
+    def _parse_market_closing_time(
+        self, event_title: str, reference_date: datetime | None = None
+    ) -> datetime | None:
+        """Parse the market closing time from an event title.
+
+        Event titles typically follow the format:
+        "[Asset] Up or Down - [Month Day], [StartTime]-[EndTime] ET"
+        Example: "Bitcoin Up or Down - January 9, 8:15PM-8:30PM ET"
+
+        This method extracts the end time (closing time) from the time range.
+
+        Args:
+            event_title: The event title containing the time range.
+            reference_date: Optional reference datetime for inferring year.
+                           Defaults to current time if not provided.
+
+        Returns:
+            Parsed closing time in UTC, or None if parsing fails.
+        """
+        if not event_title:
+            return None
+
+        # Use current time as reference if not provided
+        if reference_date is None:
+            reference_date = datetime.now(timezone.utc)
+
+        try:
+            # Regex to extract: "Month Day, StartTime-EndTime ET"
+            # Examples:
+            #   "January 9, 8:15PM-8:30PM ET"
+            #   "December 31, 11:45PM-12:00AM ET"
+            pattern = r"(\w+)\s+(\d{1,2}),\s*(\d{1,2}):(\d{2})(AM|PM)-(\d{1,2}):(\d{2})(AM|PM)\s*ET"
+            match = re.search(pattern, event_title, re.IGNORECASE)
+
+            if not match:
+                logger.debug(
+                    "Could not extract time range from event title: '%s'",
+                    event_title[:100],
+                )
+                return None
+
+            # Extract matched groups
+            month_name = match.group(1)
+            day = int(match.group(2))
+            # Start time groups: 3, 4, 5 (hour, minute, am/pm)
+            # End time groups: 6, 7, 8 (hour, minute, am/pm)
+            end_hour = int(match.group(6))
+            end_minute = int(match.group(7))
+            end_ampm = match.group(8).upper()
+
+            # Convert 12-hour to 24-hour format
+            if end_ampm == "PM" and end_hour != 12:
+                end_hour += 12
+            elif end_ampm == "AM" and end_hour == 12:
+                end_hour = 0
+
+            # Parse month name to number
+            month_map = {
+                "january": 1, "february": 2, "march": 3, "april": 4,
+                "may": 5, "june": 6, "july": 7, "august": 8,
+                "september": 9, "october": 10, "november": 11, "december": 12,
+            }
+            month = month_map.get(month_name.lower())
+            if month is None:
+                logger.debug("Invalid month name '%s' in event title", month_name)
+                return None
+
+            # Determine year from reference date
+            # If the parsed month/day would be more than 6 months in the past,
+            # assume it's for the next year
+            year = reference_date.year
+            et_tz = ZoneInfo("America/New_York")
+
+            # Create datetime in ET timezone
+            closing_time_et = datetime(
+                year=year,
+                month=month,
+                day=day,
+                hour=end_hour,
+                minute=end_minute,
+                second=0,
+                tzinfo=et_tz,
+            )
+
+            # Handle midnight boundary: if end time is 12:00AM, it's the next day
+            # Check if start time > end time (e.g., 11:45PM-12:00AM)
+            start_hour = int(match.group(3))
+            start_ampm = match.group(5).upper()
+            if start_ampm == "PM" and start_hour != 12:
+                start_hour += 12
+            elif start_ampm == "AM" and start_hour == 12:
+                start_hour = 0
+
+            if start_hour > end_hour or (start_hour == 23 and end_hour == 0):
+                # End time is on the next day
+                closing_time_et = closing_time_et + timedelta(days=1)
+
+            # Convert to UTC
+            closing_time_utc = closing_time_et.astimezone(timezone.utc)
+
+            logger.debug(
+                "Parsed closing time from '%s': %s ET -> %s UTC",
+                event_title[:50],
+                closing_time_et.strftime("%Y-%m-%d %H:%M %Z"),
+                closing_time_utc.strftime("%Y-%m-%d %H:%M %Z"),
+            )
+
+            return closing_time_utc
+
+        except (ValueError, TypeError, AttributeError) as e:
+            logger.debug(
+                "Failed to parse market closing time from '%s': %s",
+                event_title[:100],
+                e,
+            )
             return None
 
     def _parse_event(self, raw: dict[str, Any], series_id: str = "") -> Event:
