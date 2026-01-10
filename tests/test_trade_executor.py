@@ -197,11 +197,12 @@ class TestTradeExecutorNotify:
         executor = TradeExecutor(config)
 
         opportunity = Opportunity(
-            market_id="test-token-id",
+            market_id="condition-12345",
             side="YES",
             price=0.80,
             detected_at=datetime.now(),
             source="last_trade",
+            token_id="test-clob-token-id",
         )
         result = executor.notify(opportunity)
         assert result is True
@@ -224,17 +225,18 @@ class TestTradeExecutorNotify:
         executor = TradeExecutor(config)
 
         opportunity = Opportunity(
-            market_id="test-token-id",
+            market_id="condition-12345",
             side="YES",
             price=0.80,
             detected_at=datetime.now(),
             source="last_trade",
+            token_id="test-clob-token-id",
         )
         result = executor.notify(opportunity)
         assert result is False
 
-    def test_notify_skips_empty_market_id(self):
-        """Verify notify skips opportunities with empty market_id."""
+    def test_notify_skips_empty_token_id_and_market_id(self):
+        """Verify notify skips opportunities with no token_id and empty market_id."""
         config = Config(auto_trade_enabled=False)
         executor = TradeExecutor(config)
         # Enable manually to test this path
@@ -247,10 +249,10 @@ class TestTradeExecutorNotify:
             price=0.80,
             detected_at=datetime.now(),
             source="last_trade",
+            token_id=None,
         )
         result = executor.notify(opportunity)
-        # Empty market_id is accepted, but notify returns True when disabled
-        # Let's test with a proper enabled executor
+        # No valid token_id or market_id, trade should be skipped
         assert result is False
 
 
@@ -525,8 +527,24 @@ class TestTradeExecutorExceptionHierarchy:
 class TestTradeExecutorTokenId:
     """Test token ID extraction from opportunities."""
 
-    def test_get_token_id_from_market_id(self):
-        """Verify token ID is extracted from opportunity market_id."""
+    def test_get_token_id_prefers_token_id_field(self):
+        """Verify token_id field is preferred over market_id."""
+        config = Config(auto_trade_enabled=False)
+        executor = TradeExecutor(config)
+
+        opportunity = Opportunity(
+            market_id="condition-12345",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+            token_id="26649923323844112890821751864994084620998105018839072358340634246989649300706",
+        )
+        token_id = executor._get_token_id_for_opportunity(opportunity)
+        assert token_id == "26649923323844112890821751864994084620998105018839072358340634246989649300706"
+
+    def test_get_token_id_falls_back_to_market_id(self):
+        """Verify market_id is used as fallback when token_id is None."""
         config = Config(auto_trade_enabled=False)
         executor = TradeExecutor(config)
 
@@ -536,12 +554,13 @@ class TestTradeExecutorTokenId:
             price=0.80,
             detected_at=datetime.now(),
             source="last_trade",
+            token_id=None,
         )
         token_id = executor._get_token_id_for_opportunity(opportunity)
         assert token_id == "0x123abc456def"
 
-    def test_get_token_id_empty_market_id(self):
-        """Verify None returned for empty market_id."""
+    def test_get_token_id_empty_market_id_no_token_id(self):
+        """Verify None returned when both market_id and token_id are empty/None."""
         config = Config(auto_trade_enabled=False)
         executor = TradeExecutor(config)
 
@@ -551,25 +570,44 @@ class TestTradeExecutorTokenId:
             price=0.80,
             detected_at=datetime.now(),
             source="last_trade",
+            token_id=None,
         )
         token_id = executor._get_token_id_for_opportunity(opportunity)
         assert token_id is None
 
-    def test_get_token_id_long_market_id(self):
-        """Verify long market IDs are returned correctly."""
+    def test_get_token_id_long_token_id(self):
+        """Verify long token IDs are returned correctly."""
         config = Config(auto_trade_enabled=False)
         executor = TradeExecutor(config)
 
         long_id = "a" * 100
         opportunity = Opportunity(
-            market_id=long_id,
+            market_id="short-market-id",
             side="YES",
             price=0.80,
             detected_at=datetime.now(),
             source="last_trade",
+            token_id=long_id,
         )
         token_id = executor._get_token_id_for_opportunity(opportunity)
         assert token_id == long_id
+
+    def test_get_token_id_empty_token_id_uses_market_id(self):
+        """Verify empty string token_id falls back to market_id."""
+        config = Config(auto_trade_enabled=False)
+        executor = TradeExecutor(config)
+
+        opportunity = Opportunity(
+            market_id="fallback-market-id",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+            token_id="",
+        )
+        token_id = executor._get_token_id_for_opportunity(opportunity)
+        # Empty string is falsy, so should fall back to market_id
+        assert token_id == "fallback-market-id"
 
 
 class TestTradeExecutorIsEnabledProperty:
@@ -614,11 +652,12 @@ class TestTradeExecutorIntegration:
         executor = TradeExecutor(config)
 
         opportunity = Opportunity(
-            market_id="test-token-id",
+            market_id="condition-12345",
             side="YES",
             price=0.80,
             detected_at=datetime.now(),
             source="last_trade",
+            token_id="test-clob-token-id",
         )
         result = executor.notify(opportunity)
         assert result is True
@@ -643,11 +682,12 @@ class TestTradeExecutorIntegration:
 
         with patch("src.trading.executor.time.sleep"):
             opportunity = Opportunity(
-                market_id="test-token-id",
+                market_id="condition-12345",
                 side="YES",
                 price=0.80,
                 detected_at=datetime.now(),
                 source="last_trade",
+                token_id="test-clob-token-id",
             )
             result = executor.notify(opportunity)
             assert result is False
@@ -670,11 +710,12 @@ class TestTradeExecutorIntegration:
         executor = TradeExecutor(config)
 
         opportunity = Opportunity(
-            market_id="test-token-id",
+            market_id="condition-12345",
             side="YES",
             price=0.80,
             detected_at=datetime.now(),
             source="last_trade",
+            token_id="test-clob-token-id",
         )
         result = executor.notify(opportunity)
         assert result is False
@@ -684,7 +725,7 @@ class TestTradeExecutorIntegration:
     @patch("src.trading.executor.ClobClient")
     @patch("src.trading.executor.OrderArgs")
     def test_order_created_with_correct_parameters(self, mock_order_args, mock_clob_client):
-        """Verify order is created with correct parameters."""
+        """Verify order is created with correct parameters using token_id."""
         mock_client_instance = MagicMock()
         mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
         mock_client_instance.create_order.return_value = MagicMock()
@@ -698,19 +739,22 @@ class TestTradeExecutorIntegration:
         )
         executor = TradeExecutor(config)
 
+        # Use token_id (CLOB token) separate from market_id (condition ID)
+        clob_token_id = "26649923323844112890821751864994084620998105018839072358340634246989649300706"
         opportunity = Opportunity(
-            market_id="test-token-id",
+            market_id="condition-12345",
             side="YES",
             price=0.80,
             detected_at=datetime.now(),
             source="last_trade",
+            token_id=clob_token_id,
         )
         executor.notify(opportunity)
 
-        # Verify OrderArgs was called with correct parameters
+        # Verify OrderArgs was called with the token_id (not market_id)
         mock_order_args.assert_called_once()
         call_kwargs = mock_order_args.call_args[1]
-        assert call_kwargs["token_id"] == "test-token-id"
+        assert call_kwargs["token_id"] == clob_token_id
         assert call_kwargs["price"] == LIMIT_PRICE
         assert abs(call_kwargs["size"] - 20.20) < 0.01
         assert call_kwargs["side"] == "BUY"
@@ -733,11 +777,12 @@ class TestTradeExecutorIntegration:
         executor = TradeExecutor(config)
 
         opportunity = Opportunity(
-            market_id="test-token-id",
+            market_id="condition-12345",
             side="YES",
             price=0.80,
             detected_at=datetime.now(),
             source="last_trade",
+            token_id="test-clob-token-id",
         )
         executor.notify(opportunity)
 

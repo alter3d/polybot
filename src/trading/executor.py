@@ -340,8 +340,8 @@ class TradeExecutor(BaseNotifier):
     def _get_token_id_for_opportunity(self, opportunity: Opportunity) -> Optional[str]:
         """Extract the token ID from an opportunity.
 
-        The market_id in the opportunity corresponds to the token ID
-        needed for order placement.
+        The token_id field contains the CLOB token ID needed for order
+        placement. Falls back to market_id for backward compatibility.
 
         Args:
             opportunity: The opportunity containing market information.
@@ -349,10 +349,21 @@ class TradeExecutor(BaseNotifier):
         Returns:
             Token ID for order placement, or None if invalid.
         """
-        if not opportunity.market_id:
-            logger.warning("Opportunity has no market_id")
-            return None
-        return opportunity.market_id
+        # Prefer token_id (CLOB token) over market_id (condition ID)
+        token_id = opportunity.token_id
+        if token_id:
+            return token_id
+
+        # Fallback to market_id for backward compatibility
+        if opportunity.market_id:
+            logger.warning(
+                "Opportunity has no token_id, falling back to market_id: %s",
+                opportunity.market_id,
+            )
+            return opportunity.market_id
+
+        logger.warning("Opportunity has no token_id or market_id")
+        return None
 
     def _execute_trade(self, opportunity: Opportunity) -> bool:
         """Execute a trade for the given opportunity.

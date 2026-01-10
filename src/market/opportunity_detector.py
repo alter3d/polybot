@@ -26,11 +26,12 @@ class Opportunity:
     threshold, indicating potential trading action.
 
     Attributes:
-        market_id: Unique identifier for the market.
+        market_id: Unique identifier for the market (condition ID).
         side: Trading side, either "YES" or "NO".
         price: The price that triggered the opportunity.
         detected_at: Timestamp when the opportunity was detected.
         source: Source of the price data ("last_trade").
+        token_id: CLOB token ID for trading (long string required by API).
     """
 
     market_id: str
@@ -38,6 +39,7 @@ class Opportunity:
     price: float
     detected_at: datetime
     source: str  # "last_trade"
+    token_id: Optional[str] = None  # CLOB token ID for trading
 
     def __str__(self) -> str:
         """Human-readable string representation."""
@@ -71,6 +73,7 @@ def detect_opportunity(
     last_trade_price: Optional[float],
     threshold: float,
     market_id: str,
+    token_id: Optional[str] = None,
 ) -> list[Opportunity]:
     """Detect trading opportunities based on price thresholds.
 
@@ -81,6 +84,7 @@ def detect_opportunity(
         last_trade_price: Most recent trade price (can be None if unavailable).
         threshold: Price threshold for opportunity detection (e.g., 0.70).
         market_id: Unique identifier for the market being monitored.
+        token_id: CLOB token ID for trading (required for order submission).
 
     Returns:
         List of Opportunity objects for each price exceeding threshold.
@@ -109,6 +113,7 @@ def detect_opportunity(
             price=last_trade_price,
             detected_at=now,
             source="last_trade",
+            token_id=token_id,
         )
         opportunities.append(opp)
         alert_key = (market_id, "last_trade")
@@ -168,11 +173,13 @@ def detect_opportunities_batch(
     for data in price_data:
         market_id = data.get("market_id", "unknown")
         last_trade_price = data.get("last_trade_price")
+        token_id = data.get("token_id")
 
         opportunities = detect_opportunity(
             last_trade_price=last_trade_price,
             threshold=threshold,
             market_id=market_id,
+            token_id=token_id,
         )
         all_opportunities.extend(opportunities)
 

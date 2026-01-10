@@ -366,6 +366,7 @@ class PolymarketMonitor:
             last_trade_price=last_trade_price,
             threshold=self._config.opportunity_threshold,
             market_id=market.id,
+            token_id=token_id,
         )
 
         for opp in opportunities:
