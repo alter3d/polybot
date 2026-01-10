@@ -1,25 +1,25 @@
 {
   "active": true,
-  "spec": "008-currently-our-trade-opportunity-monitoring-will-tr",
+  "spec": "003-add-ability-to-automatically-create-a-trade",
   "state": "building",
   "subtasks": {
-    "completed": 14,
-    "total": 15,
+    "completed": 8,
+    "total": 16,
     "in_progress": 1,
     "failed": 0
   },
   "phase": {
-    "current": "Verification",
+    "current": "Main Integration",
     "id": null,
-    "total": 4
+    "total": 3
   },
   "workers": {
     "active": 0,
     "max": 1
   },
   "session": {
-    "number": 16,
-    "started_at": "2026-01-10T01:19:47.913061"
+    "number": 9,
+    "started_at": "2026-01-10T14:14:02.740511"
   },
-  "last_update": "2026-01-10T01:54:04.663768"
+  "last_update": "2026-01-10T14:32:56.870750"
 }

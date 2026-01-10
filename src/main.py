@@ -373,6 +373,7 @@ class PolymarketMonitor:
             if not self._is_duplicate_opportunity(opp):
                 self._window_opportunities.append(opp)
                 self._notifier.notify(opp)
+                self._trade_executor.notify(opp)
 
     def _is_duplicate_opportunity(self, new_opp: Opportunity) -> bool:
         """Check if an opportunity has already been notified for this market.
