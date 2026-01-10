@@ -99,7 +99,9 @@ class PolymarketMonitor:
         self._gamma_client: GammaClient | None = None
         self._websocket: MarketWebSocket | None = None
         self._notifier = ConsoleNotifier()
-        self._trade_executor = TradeExecutor(config)
+        # TradeExecutor is initialized later in run() after logging is configured
+        # This ensures all initialization logs are captured
+        self._trade_executor: TradeExecutor | None = None
 
         # Market tracking
         self._active_markets: list[Market] = []
@@ -375,7 +377,8 @@ class PolymarketMonitor:
             if not self._is_duplicate_opportunity(opp):
                 self._window_opportunities.append(opp)
                 self._notifier.notify(opp)
-                self._trade_executor.notify(opp)
+                if self._trade_executor:
+                    self._trade_executor.notify(opp)
 
     def _is_duplicate_opportunity(self, new_opp: Opportunity) -> bool:
         """Check if an opportunity has already been notified for this market.
@@ -813,6 +816,10 @@ class PolymarketMonitor:
 
         # Setup logging
         self._setup_logging()
+
+        # Initialize TradeExecutor after logging is configured
+        # This ensures all initialization logs (including any errors) are captured
+        self._trade_executor = TradeExecutor(self._config)
 
         # Initialize API clients
         if not self._initialize_clients():
