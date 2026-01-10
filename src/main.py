@@ -358,11 +358,9 @@ class PolymarketMonitor:
         if not market:
             return
 
-        bid_price = self._best_bids.get(token_id)
         last_trade_price = self._last_prices.get(token_id)
 
         opportunities = detect_opportunity(
-            bid_price=bid_price,
             last_trade_price=last_trade_price,
             threshold=self._config.opportunity_threshold,
             market_id=market.id,

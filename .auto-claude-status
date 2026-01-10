@@ -1,15 +1,15 @@
 {
   "active": true,
-  "spec": "006-our-markets-have-finite-lifetime-they-have-a-closi",
+  "spec": "008-currently-our-trade-opportunity-monitoring-will-tr",
   "state": "building",
   "subtasks": {
-    "completed": 5,
-    "total": 14,
+    "completed": 14,
+    "total": 15,
     "in_progress": 1,
     "failed": 0
   },
   "phase": {
-    "current": "Market Transition Logic",
+    "current": "Verification",
     "id": null,
     "total": 4
   },
@@ -18,8 +18,8 @@
     "max": 1
   },
   "session": {
-    "number": 6,
-    "started_at": "2026-01-09T21:05:47.755308"
+    "number": 16,
+    "started_at": "2026-01-10T01:19:47.913061"
   },
-  "last_update": "2026-01-09T21:16:26.027338"
+  "last_update": "2026-01-10T01:54:04.663768"
 }
