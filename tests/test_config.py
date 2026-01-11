@@ -54,6 +54,31 @@ class TestConfigDefaults:
         config = Config()
         assert config.series_ids == []
 
+    def test_default_trade_amount_usd(self):
+        """Verify default trade amount is $20.00."""
+        config = Config()
+        assert config.trade_amount_usd == 20.0
+
+    def test_default_auto_trade_enabled(self):
+        """Verify auto trade is disabled by default."""
+        config = Config()
+        assert config.auto_trade_enabled is False
+
+    def test_default_private_key_empty(self):
+        """Verify private key is empty string by default."""
+        config = Config()
+        assert config.private_key == ""
+
+    def test_default_signature_type(self):
+        """Verify default signature type is 0 (EOA)."""
+        config = Config()
+        assert config.signature_type == 0
+
+    def test_default_funder_address_empty(self):
+        """Verify funder_address is empty string by default."""
+        config = Config()
+        assert config.funder_address == ""
+
 
 class TestConfigFromEnv:
     """Test environment variable configuration loading."""
@@ -145,6 +170,100 @@ class TestConfigFromEnv:
             config = Config.from_env()
             assert config.series_ids == []
 
+    def test_from_env_trade_amount_usd_override(self):
+        """Verify TRADE_AMOUNT_USD env var overrides default."""
+        with patch.dict(os.environ, {"TRADE_AMOUNT_USD": "50.0"}, clear=True):
+            config = Config.from_env()
+            assert config.trade_amount_usd == 50.0
+
+    def test_from_env_trade_amount_usd_float_conversion(self):
+        """Verify trade_amount_usd is correctly converted to float."""
+        with patch.dict(os.environ, {"TRADE_AMOUNT_USD": "25.50"}, clear=True):
+            config = Config.from_env()
+            assert isinstance(config.trade_amount_usd, float)
+            assert config.trade_amount_usd == 25.50
+
+    def test_from_env_auto_trade_enabled_true(self):
+        """Verify AUTO_TRADE_ENABLED=true enables trading."""
+        with patch.dict(os.environ, {"AUTO_TRADE_ENABLED": "true"}, clear=True):
+            config = Config.from_env()
+            assert config.auto_trade_enabled is True
+
+    def test_from_env_auto_trade_enabled_false(self):
+        """Verify AUTO_TRADE_ENABLED=false disables trading."""
+        with patch.dict(os.environ, {"AUTO_TRADE_ENABLED": "false"}, clear=True):
+            config = Config.from_env()
+            assert config.auto_trade_enabled is False
+
+    def test_from_env_auto_trade_enabled_one(self):
+        """Verify AUTO_TRADE_ENABLED=1 enables trading."""
+        with patch.dict(os.environ, {"AUTO_TRADE_ENABLED": "1"}, clear=True):
+            config = Config.from_env()
+            assert config.auto_trade_enabled is True
+
+    def test_from_env_auto_trade_enabled_yes(self):
+        """Verify AUTO_TRADE_ENABLED=yes enables trading."""
+        with patch.dict(os.environ, {"AUTO_TRADE_ENABLED": "yes"}, clear=True):
+            config = Config.from_env()
+            assert config.auto_trade_enabled is True
+
+    def test_from_env_auto_trade_enabled_case_insensitive(self):
+        """Verify AUTO_TRADE_ENABLED handles mixed case."""
+        with patch.dict(os.environ, {"AUTO_TRADE_ENABLED": "TRUE"}, clear=True):
+            config = Config.from_env()
+            assert config.auto_trade_enabled is True
+
+    def test_from_env_private_key_override(self):
+        """Verify PRIVATE_KEY env var overrides default."""
+        with patch.dict(os.environ, {"PRIVATE_KEY": "0x1234567890abcdef"}, clear=True):
+            config = Config.from_env()
+            assert config.private_key == "0x1234567890abcdef"
+
+    def test_from_env_signature_type_override(self):
+        """Verify SIGNATURE_TYPE env var overrides default."""
+        with patch.dict(os.environ, {"SIGNATURE_TYPE": "1"}, clear=True):
+            config = Config.from_env()
+            assert config.signature_type == 1
+
+    def test_from_env_signature_type_int_conversion(self):
+        """Verify signature_type is correctly converted to int."""
+        with patch.dict(os.environ, {"SIGNATURE_TYPE": "2"}, clear=True):
+            config = Config.from_env()
+            assert isinstance(config.signature_type, int)
+            assert config.signature_type == 2
+
+    def test_from_env_trading_multiple_overrides(self):
+        """Verify multiple trading env vars can be set simultaneously."""
+        env_vars = {
+            "TRADE_AMOUNT_USD": "100.0",
+            "AUTO_TRADE_ENABLED": "true",
+            "PRIVATE_KEY": "0xdeadbeef",
+            "SIGNATURE_TYPE": "1",
+        }
+        with patch.dict(os.environ, env_vars, clear=True):
+            config = Config.from_env()
+            assert config.trade_amount_usd == 100.0
+            assert config.auto_trade_enabled is True
+            assert config.private_key == "0xdeadbeef"
+            assert config.signature_type == 1
+
+    def test_from_env_funder_address_override(self):
+        """Verify FUNDER_ADDRESS env var overrides default."""
+        with patch.dict(os.environ, {"FUNDER_ADDRESS": "0x1234567890abcdef1234567890abcdef12345678"}, clear=True):
+            config = Config.from_env()
+            assert config.funder_address == "0x1234567890abcdef1234567890abcdef12345678"
+
+    def test_from_env_funder_address_with_signature_type_1(self):
+        """Verify FUNDER_ADDRESS with SIGNATURE_TYPE=1 for Magic wallet."""
+        env_vars = {
+            "SIGNATURE_TYPE": "1",
+            "FUNDER_ADDRESS": "0xfunder1234567890abcdef1234567890abcdef1234",
+        }
+        with patch.dict(os.environ, env_vars, clear=True):
+            config = Config.from_env()
+            assert config.signature_type == 1
+            assert config.funder_address == "0xfunder1234567890abcdef1234567890abcdef1234"
+
 
 class TestConfigDataclass:
     """Test Config dataclass behavior."""
@@ -183,6 +302,28 @@ class TestConfigDataclass:
         """Verify Config can be instantiated with custom series_ids."""
         config = Config(series_ids=["series1", "series2"])
         assert config.series_ids == ["series1", "series2"]
+
+    def test_config_custom_trading_values(self):
+        """Verify Config can be instantiated with custom trading values."""
+        config = Config(
+            trade_amount_usd=50.0,
+            auto_trade_enabled=True,
+            private_key="0xabc123",
+            signature_type=2,
+        )
+        assert config.trade_amount_usd == 50.0
+        assert config.auto_trade_enabled is True
+        assert config.private_key == "0xabc123"
+        assert config.signature_type == 2
+
+    def test_config_custom_funder_address(self):
+        """Verify Config can be instantiated with custom funder_address."""
+        config = Config(
+            signature_type=1,
+            funder_address="0xfunder1234567890abcdef",
+        )
+        assert config.signature_type == 1
+        assert config.funder_address == "0xfunder1234567890abcdef"
 
     def test_config_equality(self):
         """Verify two Config instances with same values are equal."""
@@ -244,3 +385,56 @@ class TestConfigEdgeCases:
         with patch.dict(os.environ, {"SHARES_TO_TRADE": "not-an-int"}, clear=True):
             with pytest.raises(ValueError):
                 Config.from_env()
+
+    def test_from_env_trade_amount_zero(self):
+        """Verify zero trade amount is valid."""
+        with patch.dict(os.environ, {"TRADE_AMOUNT_USD": "0.0"}, clear=True):
+            config = Config.from_env()
+            assert config.trade_amount_usd == 0.0
+
+    def test_from_env_trade_amount_large(self):
+        """Verify large trade amounts are valid."""
+        with patch.dict(os.environ, {"TRADE_AMOUNT_USD": "10000.0"}, clear=True):
+            config = Config.from_env()
+            assert config.trade_amount_usd == 10000.0
+
+    def test_from_env_trade_amount_invalid_raises_error(self):
+        """Verify invalid trade amount value raises ValueError."""
+        with patch.dict(os.environ, {"TRADE_AMOUNT_USD": "not-a-number"}, clear=True):
+            with pytest.raises(ValueError):
+                Config.from_env()
+
+    def test_from_env_signature_type_invalid_raises_error(self):
+        """Verify invalid signature type value raises ValueError."""
+        with patch.dict(os.environ, {"SIGNATURE_TYPE": "not-an-int"}, clear=True):
+            with pytest.raises(ValueError):
+                Config.from_env()
+
+    def test_from_env_auto_trade_enabled_invalid_string(self):
+        """Verify invalid AUTO_TRADE_ENABLED string defaults to false."""
+        with patch.dict(os.environ, {"AUTO_TRADE_ENABLED": "invalid"}, clear=True):
+            config = Config.from_env()
+            assert config.auto_trade_enabled is False
+
+    def test_from_env_auto_trade_enabled_empty_string(self):
+        """Verify empty AUTO_TRADE_ENABLED string defaults to false."""
+        with patch.dict(os.environ, {"AUTO_TRADE_ENABLED": ""}, clear=True):
+            config = Config.from_env()
+            assert config.auto_trade_enabled is False
+
+    def test_from_env_preserves_default_trading_params(self):
+        """Verify trading params keep defaults when not overridden."""
+        with patch.dict(os.environ, {"OPPORTUNITY_THRESHOLD": "0.60"}, clear=True):
+            config = Config.from_env()
+            # Should still have default trading params
+            assert config.trade_amount_usd == 20.0
+            assert config.auto_trade_enabled is False
+            assert config.private_key == ""
+            assert config.signature_type == 0
+            assert config.funder_address == ""
+
+    def test_from_env_funder_address_empty_string(self):
+        """Verify empty FUNDER_ADDRESS results in empty string."""
+        with patch.dict(os.environ, {"FUNDER_ADDRESS": ""}, clear=True):
+            config = Config.from_env()
+            assert config.funder_address == ""

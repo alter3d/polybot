@@ -59,6 +59,7 @@ from src.market.timing import (
     time_until_window_ends,
 )
 from src.notifications.console import ConsoleNotifier
+from src.trading.executor import TradeExecutor
 
 # Load environment variables from .env file
 load_dotenv()
@@ -98,6 +99,9 @@ class PolymarketMonitor:
         self._gamma_client: GammaClient | None = None
         self._websocket: MarketWebSocket | None = None
         self._notifier = ConsoleNotifier()
+        # TradeExecutor is initialized later in run() after logging is configured
+        # This ensures all initialization logs are captured
+        self._trade_executor: TradeExecutor | None = None
 
         # Market tracking
         self._active_markets: list[Market] = []
@@ -364,6 +368,8 @@ class PolymarketMonitor:
             last_trade_price=last_trade_price,
             threshold=self._config.opportunity_threshold,
             market_id=market.id,
+            token_id=token_id,
+            neg_risk=market.neg_risk,
         )
 
         for opp in opportunities:
@@ -371,6 +377,8 @@ class PolymarketMonitor:
             if not self._is_duplicate_opportunity(opp):
                 self._window_opportunities.append(opp)
                 self._notifier.notify(opp)
+                if self._trade_executor:
+                    self._trade_executor.notify(opp)
 
     def _is_duplicate_opportunity(self, new_opp: Opportunity) -> bool:
         """Check if an opportunity has already been notified for this market.
@@ -809,6 +817,10 @@ class PolymarketMonitor:
         # Setup logging
         self._setup_logging()
 
+        # Initialize TradeExecutor after logging is configured
+        # This ensures all initialization logs (including any errors) are captured
+        self._trade_executor = TradeExecutor(self._config)
+
         # Initialize API clients
         if not self._initialize_clients():
             logger.error("Failed to initialize clients, exiting")
@@ -926,6 +938,8 @@ def main() -> int:
         print("Configuration valid:")
         print(f"  Threshold: ${config.opportunity_threshold:.2f}")
         print(f"  Shares to trade: {config.shares_to_trade}")
+        print(f"  Trade amount USD: ${config.trade_amount_usd:.2f}")
+        print(f"  Auto trade enabled: {config.auto_trade_enabled}")
         print(f"  Monitor start: {config.monitor_start_minutes_before_end} min before end")
         print(f"  Series IDs: {', '.join(config.series_ids) if config.series_ids else '(none)'}")
         print(f"  CLOB host: {config.clob_host}")
