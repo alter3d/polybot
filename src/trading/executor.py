@@ -74,7 +74,7 @@ MAX_RETRIES = 1
 RETRY_DELAY_SECONDS = 1.0
 
 # Fixed limit price for all orders
-LIMIT_PRICE = 0.99
+LIMIT_PRICE = 0.90
 
 
 class TradeExecutor(BaseNotifier):
