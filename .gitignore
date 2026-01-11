@@ -1,4 +1,7 @@
 
+# redeemer is a work-in-progress that may never work, ignore it for now
+redeemer/
+
 # git worktree top-level dir for auto-claude
 .worktrees/
 
