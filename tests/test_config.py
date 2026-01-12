@@ -19,11 +19,6 @@ class TestConfigDefaults:
         config = Config()
         assert config.opportunity_threshold == 0.70
 
-    def test_default_shares_to_trade(self):
-        """Verify default shares to trade is 20."""
-        config = Config()
-        assert config.shares_to_trade == 20
-
     def test_default_monitor_start_minutes(self):
         """Verify default monitoring starts 3 minutes before window end."""
         config = Config()
@@ -98,7 +93,6 @@ class TestConfigFromEnv:
         with patch.dict(os.environ, {}, clear=True):
             config = Config.from_env()
             assert config.opportunity_threshold == 0.70
-            assert config.shares_to_trade == 20
             assert config.monitor_start_minutes_before_end == 3
             assert config.log_level == "INFO"
             assert config.series_ids == []
@@ -110,12 +104,6 @@ class TestConfigFromEnv:
         with patch.dict(os.environ, {"OPPORTUNITY_THRESHOLD": "0.50"}, clear=True):
             config = Config.from_env()
             assert config.opportunity_threshold == 0.50
-
-    def test_from_env_shares_to_trade_override(self):
-        """Verify SHARES_TO_TRADE env var overrides default."""
-        with patch.dict(os.environ, {"SHARES_TO_TRADE": "100"}, clear=True):
-            config = Config.from_env()
-            assert config.shares_to_trade == 100
 
     def test_from_env_monitor_start_minutes_override(self):
         """Verify MONITOR_START_MINUTES env var overrides default."""
@@ -133,14 +121,12 @@ class TestConfigFromEnv:
         """Verify multiple env vars can be set simultaneously."""
         env_vars = {
             "OPPORTUNITY_THRESHOLD": "0.65",
-            "SHARES_TO_TRADE": "50",
             "MONITOR_START_MINUTES": "2",
             "LOG_LEVEL": "WARNING",
         }
         with patch.dict(os.environ, env_vars, clear=True):
             config = Config.from_env()
             assert config.opportunity_threshold == 0.65
-            assert config.shares_to_trade == 50
             assert config.monitor_start_minutes_before_end == 2
             assert config.log_level == "WARNING"
 
@@ -150,13 +136,6 @@ class TestConfigFromEnv:
             config = Config.from_env()
             assert isinstance(config.opportunity_threshold, float)
             assert config.opportunity_threshold == 0.85
-
-    def test_from_env_shares_int_conversion(self):
-        """Verify shares_to_trade is correctly converted to int."""
-        with patch.dict(os.environ, {"SHARES_TO_TRADE": "42"}, clear=True):
-            config = Config.from_env()
-            assert isinstance(config.shares_to_trade, int)
-            assert config.shares_to_trade == 42
 
     def test_from_env_series_ids_single(self):
         """Verify SERIES_IDS env var with single series ID."""
@@ -316,12 +295,10 @@ class TestConfigDataclass:
         """Verify Config can be instantiated with custom values."""
         config = Config(
             opportunity_threshold=0.80,
-            shares_to_trade=30,
             monitor_start_minutes_before_end=5,
             log_level="DEBUG",
         )
         assert config.opportunity_threshold == 0.80
-        assert config.shares_to_trade == 30
         assert config.monitor_start_minutes_before_end == 5
         assert config.log_level == "DEBUG"
 
@@ -401,12 +378,6 @@ class TestConfigEdgeCases:
             config = Config.from_env()
             assert config.opportunity_threshold == 1.0
 
-    def test_from_env_shares_zero(self):
-        """Verify zero shares is valid."""
-        with patch.dict(os.environ, {"SHARES_TO_TRADE": "0"}, clear=True):
-            config = Config.from_env()
-            assert config.shares_to_trade == 0
-
     def test_from_env_monitor_minutes_one(self):
         """Verify single minute monitoring window is valid."""
         with patch.dict(os.environ, {"MONITOR_START_MINUTES": "1"}, clear=True):
@@ -425,12 +396,6 @@ class TestConfigEdgeCases:
     def test_from_env_invalid_float_raises_error(self):
         """Verify invalid float value raises ValueError."""
         with patch.dict(os.environ, {"OPPORTUNITY_THRESHOLD": "not-a-number"}, clear=True):
-            with pytest.raises(ValueError):
-                Config.from_env()
-
-    def test_from_env_invalid_int_raises_error(self):
-        """Verify invalid int value raises ValueError."""
-        with patch.dict(os.environ, {"SHARES_TO_TRADE": "not-an-int"}, clear=True):
             with pytest.raises(ValueError):
                 Config.from_env()
 
