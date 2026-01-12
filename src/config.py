@@ -14,7 +14,6 @@ class Config:
 
     Attributes:
         opportunity_threshold: Price threshold for opportunity detection (default: 0.70)
-        shares_to_trade: Number of shares per trade for future use (default: 20)
         trade_amount_usd: Dollar amount per trade for automatic trading (default: 20.0)
         auto_trade_enabled: Enable automatic trade execution (default: False)
         private_key: Wallet private key for signing transactions (default: empty)
@@ -34,7 +33,6 @@ class Config:
 
     # Trading parameters
     opportunity_threshold: float = 0.70  # Price threshold for opportunities
-    shares_to_trade: int = 20  # Default shares per trade (future use)
     trade_amount_usd: float = 20.0  # Dollar amount per trade
     auto_trade_enabled: bool = False  # Enable automatic trade execution
     private_key: str = ""  # Wallet private key for signing transactions
@@ -64,7 +62,6 @@ class Config:
 
         Environment variables:
             OPPORTUNITY_THRESHOLD: Price threshold (default: 0.70)
-            SHARES_TO_TRADE: Number of shares per trade (default: 20)
             TRADE_AMOUNT_USD: Dollar amount per trade (default: 20.0)
             AUTO_TRADE_ENABLED: Enable automatic trade execution (default: false)
             PRIVATE_KEY: Wallet private key for signing transactions (default: empty)
@@ -89,7 +86,6 @@ class Config:
 
         return cls(
             opportunity_threshold=float(environ.get("OPPORTUNITY_THRESHOLD", "0.70")),
-            shares_to_trade=int(environ.get("SHARES_TO_TRADE", "20")),
             trade_amount_usd=float(environ.get("TRADE_AMOUNT_USD", "20.0")),
             auto_trade_enabled=auto_trade_enabled,
             private_key=environ.get("PRIVATE_KEY", ""),
