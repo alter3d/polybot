@@ -77,6 +77,7 @@ def detect_opportunity(
     market_id: str,
     token_id: Optional[str] = None,
     neg_risk: bool = False,
+    outcome: str = "YES",
 ) -> list[Opportunity]:
     """Detect trading opportunities based on price thresholds.
 
@@ -89,6 +90,7 @@ def detect_opportunity(
         market_id: Unique identifier for the market being monitored.
         token_id: CLOB token ID for trading (required for order submission).
         neg_risk: Whether this is a negative risk market (affects order creation).
+        outcome: Token outcome ("YES" or "NO") to set as the opportunity side.
 
     Returns:
         List of Opportunity objects for each price exceeding threshold.
@@ -104,16 +106,19 @@ def detect_opportunity(
     Notes:
         - Invalid prices (None, NaN, negative) are safely skipped
         - At most one opportunity is returned per call
-        - Side is set to "YES" when price is above threshold
+        - Side is set based on the token's outcome (YES or NO)
     """
     opportunities: list[Opportunity] = []
     now = datetime.now()
+
+    # Normalize outcome to uppercase for consistency
+    side = outcome.upper() if outcome else "YES"
 
     # Check last trade price against threshold
     if _is_valid_price(last_trade_price) and last_trade_price >= threshold:
         opp = Opportunity(
             market_id=market_id,
-            side="YES",  # Last trade above threshold suggests YES confidence
+            side=side,  # Use the token's outcome (YES or NO)
             price=last_trade_price,
             detected_at=now,
             source="last_trade",

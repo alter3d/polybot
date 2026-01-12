@@ -117,6 +117,10 @@ class PolymarketMonitor:
         # Market lifecycle tracking
         self._current_market_closing_time: datetime | None = None
 
+        # Per-market reversal state tracking
+        self._last_alerted_side: dict[str, str] = {}
+        self._market_multipliers: dict[str, float] = {}
+
         # Register signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -355,12 +359,22 @@ class PolymarketMonitor:
     def _check_opportunity(self, token_id: str) -> None:
         """Check if current prices indicate an opportunity.
 
+        Handles bidirectional alerts by tracking the last-alerted side per market
+        and applying a reversal multiplier when the opposite side triggers.
+
         Args:
             token_id: Token ID to check for opportunities.
         """
         market = self._token_to_market.get(token_id)
         if not market:
             return
+
+        # Find the token's outcome (YES or NO) from the market's tokens
+        token_outcome = "YES"  # Default fallback
+        for token in market.tokens:
+            if token.token_id == token_id:
+                token_outcome = token.outcome
+                break
 
         last_trade_price = self._last_prices.get(token_id)
 
@@ -370,32 +384,70 @@ class PolymarketMonitor:
             market_id=market.id,
             token_id=token_id,
             neg_risk=market.neg_risk,
+            outcome=token_outcome,
         )
 
         for opp in opportunities:
             # Avoid duplicate notifications for same opportunity
             if not self._is_duplicate_opportunity(opp):
+                # Check if this is a reversal (opposite side from last alert)
+                last_side = self._last_alerted_side.get(opp.market_id)
+                is_reversal = last_side is not None and last_side != opp.side
+
+                # Initialize or update the multiplier
+                if opp.market_id not in self._market_multipliers:
+                    # First alert for this market - start at 1.0
+                    self._market_multipliers[opp.market_id] = 1.0
+                elif is_reversal:
+                    # Reversal detected - apply the reversal multiplier
+                    self._market_multipliers[opp.market_id] *= self._config.reversal_multiplier
+                    logger.info(
+                        "Reversal detected for market %s: %s -> %s, multiplier now %.2fx",
+                        opp.market_id,
+                        last_side,
+                        opp.side,
+                        self._market_multipliers[opp.market_id],
+                    )
+
+                # Update last alerted side for this market
+                self._last_alerted_side[opp.market_id] = opp.side
+
+                # Get the current multiplier for this market
+                multiplier = self._market_multipliers[opp.market_id]
+
                 self._window_opportunities.append(opp)
                 self._notifier.notify(opp)
                 if self._trade_executor:
-                    self._trade_executor.notify(opp)
+                    self._trade_executor.notify(opp, multiplier=multiplier)
 
     def _is_duplicate_opportunity(self, new_opp: Opportunity) -> bool:
-        """Check if an opportunity has already been notified for this market.
+        """Check if an opportunity is a duplicate based on last-alerted side.
 
-        Limits alerts to a single notification per market when the threshold
-        is first breached. This prevents multiple alerts for the same market
-        regardless of whether subsequent trades/bids also exceed the threshold.
+        Allows bidirectional alerts within a single market: if the last alert
+        was for one side (YES or NO), an alert for the opposite side is allowed.
+        Only blocks alerts when the same side is triggered consecutively.
+
+        This enables a ping-pong pattern where reversals trigger new alerts,
+        while preventing duplicate notifications for the same direction.
 
         Args:
             new_opp: The opportunity to check.
 
         Returns:
-            True if this market has already triggered an alert, False otherwise.
+            True if this is a same-side duplicate (should be blocked),
+            False if this is a new alert or opposite-side (should be allowed).
         """
-        for existing in self._window_opportunities:
-            if existing.market_id == new_opp.market_id:
-                return True
+        last_side = self._last_alerted_side.get(new_opp.market_id)
+
+        # First alert for this market - not a duplicate
+        if last_side is None:
+            return False
+
+        # Same side as last alert - this is a duplicate
+        if last_side == new_opp.side:
+            return True
+
+        # Opposite side - this is a reversal, not a duplicate
         return False
 
     def _time_until_market_closes(self) -> timedelta:
@@ -459,16 +511,19 @@ class PolymarketMonitor:
 
         Clears all tracking data when transitioning between markets to ensure
         no stale data from the previous market affects the next market's monitoring.
-        This includes price tracking, opportunity detection state, and market mappings.
+        This includes price tracking, opportunity detection state, market mappings,
+        and per-market reversal tracking state.
         """
         logger.debug(
             "Clearing market state: %d prices, %d bids, %d opportunities, "
-            "%d tokens, %d markets",
+            "%d tokens, %d markets, %d alerted_sides, %d multipliers",
             len(self._last_prices),
             len(self._best_bids),
             len(self._window_opportunities),
             len(self._token_to_market),
             len(self._active_markets),
+            len(self._last_alerted_side),
+            len(self._market_multipliers),
         )
 
         self._last_prices.clear()
@@ -477,6 +532,8 @@ class PolymarketMonitor:
         self._token_to_market.clear()
         self._active_markets.clear()
         self._current_market_closing_time = None
+        self._last_alerted_side.clear()
+        self._market_multipliers.clear()
 
         logger.info("Market state cleared for new market transition")
 
@@ -939,6 +996,7 @@ def main() -> int:
         print(f"  Threshold: ${config.opportunity_threshold:.2f}")
         print(f"  Shares to trade: {config.shares_to_trade}")
         print(f"  Trade amount USD: ${config.trade_amount_usd:.2f}")
+        print(f"  Reversal multiplier: {config.reversal_multiplier:.1f}x")
         print(f"  Auto trade enabled: {config.auto_trade_enabled}")
         print(f"  Monitor start: {config.monitor_start_minutes_before_end} min before end")
         print(f"  Series IDs: {', '.join(config.series_ids) if config.series_ids else '(none)'}")

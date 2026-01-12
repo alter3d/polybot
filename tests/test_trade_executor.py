@@ -201,25 +201,25 @@ class TestTradeExecutorShareCalculation:
     """Test share quantity calculation."""
 
     def test_calculate_shares_twenty_dollars(self):
-        """Verify $20 at $0.99 = 20.20 shares."""
+        """Verify $20 at $0.90 = 22.22 shares."""
         config = Config(auto_trade_enabled=False)
         executor = TradeExecutor(config)
         shares = executor._calculate_shares(20.0)
-        assert abs(shares - 20.20) < 0.01
+        assert abs(shares - 22.22) < 0.01
 
     def test_calculate_shares_one_dollar(self):
-        """Verify $1 at $0.99 = 1.01 shares."""
+        """Verify $1 at $0.90 = 1.11 shares."""
         config = Config(auto_trade_enabled=False)
         executor = TradeExecutor(config)
         shares = executor._calculate_shares(1.0)
-        assert abs(shares - 1.01) < 0.01
+        assert abs(shares - 1.11) < 0.01
 
     def test_calculate_shares_hundred_dollars(self):
-        """Verify $100 at $0.99 = 101.01 shares."""
+        """Verify $100 at $0.90 = 111.11 shares."""
         config = Config(auto_trade_enabled=False)
         executor = TradeExecutor(config)
         shares = executor._calculate_shares(100.0)
-        assert abs(shares - 101.01) < 0.01
+        assert abs(shares - 111.11) < 0.01
 
     def test_calculate_shares_uses_limit_price(self):
         """Verify share calculation uses the LIMIT_PRICE constant."""
@@ -230,9 +230,9 @@ class TestTradeExecutorShareCalculation:
         expected = amount / LIMIT_PRICE
         assert shares == expected
 
-    def test_limit_price_is_ninety_nine_cents(self):
-        """Verify LIMIT_PRICE constant is $0.99."""
-        assert LIMIT_PRICE == 0.99
+    def test_limit_price_is_ninety_cents(self):
+        """Verify LIMIT_PRICE constant is $0.90."""
+        assert LIMIT_PRICE == 0.90
 
 
 class TestTradeExecutorNotify:
@@ -829,7 +829,7 @@ class TestTradeExecutorIntegration:
         call_kwargs = mock_order_args.call_args[1]
         assert call_kwargs["token_id"] == clob_token_id
         assert call_kwargs["price"] == LIMIT_PRICE
-        assert abs(call_kwargs["size"] - 20.20) < 0.01
+        assert abs(call_kwargs["size"] - 22.22) < 0.01
         assert call_kwargs["side"] == "BUY"
 
     @patch("src.trading.executor.ClobClient")
@@ -932,3 +932,278 @@ class TestTradeExecutorIntegration:
 
         # Verify PartialCreateOrderOptions was called with neg_risk=False
         mock_options.assert_called_once_with(neg_risk=False)
+
+
+class TestTradeExecutorMultiplierAppliedSizing:
+    """Test multiplier-applied trade sizing."""
+
+    @patch("src.trading.executor.ClobClient")
+    @patch("src.trading.executor.OrderArgs")
+    def test_notify_with_default_multiplier_uses_base_amount(
+        self, mock_order_args, mock_clob_client
+    ):
+        """Verify notify with default multiplier uses base trade amount."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
+        mock_client_instance.create_order.return_value = MagicMock()
+        mock_client_instance.post_order.return_value = {"orderID": "12345"}
+        mock_clob_client.return_value = mock_client_instance
+
+        config = Config(
+            auto_trade_enabled=True,
+            private_key="test_key",
+            trade_amount_usd=20.0,
+        )
+        executor = TradeExecutor(config)
+
+        opportunity = Opportunity(
+            market_id="condition-12345",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+            token_id="test-clob-token-id",
+        )
+        # Call notify without explicit multiplier (defaults to 1.0)
+        result = executor.notify(opportunity)
+        assert result is True
+
+        # Verify OrderArgs was called with base trade amount shares
+        mock_order_args.assert_called_once()
+        call_kwargs = mock_order_args.call_args[1]
+        # $20.00 / $0.90 = 22.22 shares (LIMIT_PRICE is 0.90)
+        expected_shares = 20.0 / LIMIT_PRICE
+        assert abs(call_kwargs["size"] - expected_shares) < 0.01
+
+    @patch("src.trading.executor.ClobClient")
+    @patch("src.trading.executor.OrderArgs")
+    def test_notify_with_multiplier_1_uses_base_amount(
+        self, mock_order_args, mock_clob_client
+    ):
+        """Verify notify with explicit multiplier=1.0 uses base trade amount."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
+        mock_client_instance.create_order.return_value = MagicMock()
+        mock_client_instance.post_order.return_value = {"orderID": "12345"}
+        mock_clob_client.return_value = mock_client_instance
+
+        config = Config(
+            auto_trade_enabled=True,
+            private_key="test_key",
+            trade_amount_usd=20.0,
+        )
+        executor = TradeExecutor(config)
+
+        opportunity = Opportunity(
+            market_id="condition-12345",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+            token_id="test-clob-token-id",
+        )
+        result = executor.notify(opportunity, multiplier=1.0)
+        assert result is True
+
+        mock_order_args.assert_called_once()
+        call_kwargs = mock_order_args.call_args[1]
+        expected_shares = 20.0 / LIMIT_PRICE
+        assert abs(call_kwargs["size"] - expected_shares) < 0.01
+
+    @patch("src.trading.executor.ClobClient")
+    @patch("src.trading.executor.OrderArgs")
+    def test_notify_with_multiplier_2_doubles_trade_amount(
+        self, mock_order_args, mock_clob_client
+    ):
+        """Verify notify with multiplier=2.0 doubles the trade amount."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
+        mock_client_instance.create_order.return_value = MagicMock()
+        mock_client_instance.post_order.return_value = {"orderID": "12345"}
+        mock_clob_client.return_value = mock_client_instance
+
+        config = Config(
+            auto_trade_enabled=True,
+            private_key="test_key",
+            trade_amount_usd=20.0,
+        )
+        executor = TradeExecutor(config)
+
+        opportunity = Opportunity(
+            market_id="condition-12345",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+            token_id="test-clob-token-id",
+        )
+        result = executor.notify(opportunity, multiplier=2.0)
+        assert result is True
+
+        mock_order_args.assert_called_once()
+        call_kwargs = mock_order_args.call_args[1]
+        # $20.00 * 2.0 / $0.90 = 44.44 shares
+        expected_shares = (20.0 * 2.0) / LIMIT_PRICE
+        assert abs(call_kwargs["size"] - expected_shares) < 0.01
+
+    @patch("src.trading.executor.ClobClient")
+    @patch("src.trading.executor.OrderArgs")
+    def test_notify_with_multiplier_3_triples_trade_amount(
+        self, mock_order_args, mock_clob_client
+    ):
+        """Verify notify with multiplier=3.0 triples the trade amount."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
+        mock_client_instance.create_order.return_value = MagicMock()
+        mock_client_instance.post_order.return_value = {"orderID": "12345"}
+        mock_clob_client.return_value = mock_client_instance
+
+        config = Config(
+            auto_trade_enabled=True,
+            private_key="test_key",
+            trade_amount_usd=50.0,
+        )
+        executor = TradeExecutor(config)
+
+        opportunity = Opportunity(
+            market_id="condition-12345",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+            token_id="test-clob-token-id",
+        )
+        result = executor.notify(opportunity, multiplier=3.0)
+        assert result is True
+
+        mock_order_args.assert_called_once()
+        call_kwargs = mock_order_args.call_args[1]
+        # $50.00 * 3.0 / $0.90 = 166.67 shares
+        expected_shares = (50.0 * 3.0) / LIMIT_PRICE
+        assert abs(call_kwargs["size"] - expected_shares) < 0.01
+
+    @patch("src.trading.executor.ClobClient")
+    @patch("src.trading.executor.OrderArgs")
+    def test_notify_with_fractional_multiplier(self, mock_order_args, mock_clob_client):
+        """Verify notify with fractional multiplier (e.g., 1.5x) scales correctly."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
+        mock_client_instance.create_order.return_value = MagicMock()
+        mock_client_instance.post_order.return_value = {"orderID": "12345"}
+        mock_clob_client.return_value = mock_client_instance
+
+        config = Config(
+            auto_trade_enabled=True,
+            private_key="test_key",
+            trade_amount_usd=30.0,
+        )
+        executor = TradeExecutor(config)
+
+        opportunity = Opportunity(
+            market_id="condition-12345",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+            token_id="test-clob-token-id",
+        )
+        result = executor.notify(opportunity, multiplier=1.5)
+        assert result is True
+
+        mock_order_args.assert_called_once()
+        call_kwargs = mock_order_args.call_args[1]
+        # $30.00 * 1.5 / $0.90 = 50.00 shares
+        expected_shares = (30.0 * 1.5) / LIMIT_PRICE
+        assert abs(call_kwargs["size"] - expected_shares) < 0.01
+
+    @patch("src.trading.executor.ClobClient")
+    def test_notify_multiplier_with_disabled_trading_returns_true(self, mock_clob_client):
+        """Verify notify with multiplier returns True when trading is disabled."""
+        config = Config(auto_trade_enabled=False)
+        executor = TradeExecutor(config)
+
+        opportunity = Opportunity(
+            market_id="condition-12345",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+            token_id="test-clob-token-id",
+        )
+        # Multiplier should be ignored when trading is disabled
+        result = executor.notify(opportunity, multiplier=5.0)
+        assert result is True
+
+    @patch("src.trading.executor.ClobClient")
+    @patch("src.trading.executor.OrderArgs")
+    def test_multiplier_applied_to_different_base_amounts(
+        self, mock_order_args, mock_clob_client
+    ):
+        """Verify multiplier works correctly with various base trade amounts."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
+        mock_client_instance.create_order.return_value = MagicMock()
+        mock_client_instance.post_order.return_value = {"orderID": "12345"}
+        mock_clob_client.return_value = mock_client_instance
+
+        # Test with $10 base amount and 2x multiplier
+        config = Config(
+            auto_trade_enabled=True,
+            private_key="test_key",
+            trade_amount_usd=10.0,
+        )
+        executor = TradeExecutor(config)
+
+        opportunity = Opportunity(
+            market_id="condition-12345",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+            token_id="test-clob-token-id",
+        )
+        result = executor.notify(opportunity, multiplier=2.0)
+        assert result is True
+
+        mock_order_args.assert_called_once()
+        call_kwargs = mock_order_args.call_args[1]
+        # $10.00 * 2.0 / $0.90 = 22.22 shares
+        expected_shares = (10.0 * 2.0) / LIMIT_PRICE
+        assert abs(call_kwargs["size"] - expected_shares) < 0.01
+
+    @patch("src.trading.executor.ClobClient")
+    @patch("src.trading.executor.OrderArgs")
+    def test_multiplier_combined_with_neg_risk_market(
+        self, mock_order_args, mock_clob_client
+    ):
+        """Verify multiplier works correctly with negative risk markets."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
+        mock_client_instance.create_order.return_value = MagicMock()
+        mock_client_instance.post_order.return_value = {"orderID": "12345"}
+        mock_clob_client.return_value = mock_client_instance
+
+        config = Config(
+            auto_trade_enabled=True,
+            private_key="test_key",
+            trade_amount_usd=25.0,
+        )
+        executor = TradeExecutor(config)
+
+        opportunity = Opportunity(
+            market_id="condition-12345",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+            token_id="test-clob-token-id",
+            neg_risk=True,
+        )
+        result = executor.notify(opportunity, multiplier=2.0)
+        assert result is True
+
+        mock_order_args.assert_called_once()
+        call_kwargs = mock_order_args.call_args[1]
+        # $25.00 * 2.0 / $0.90 = 55.56 shares
+        expected_shares = (25.0 * 2.0) / LIMIT_PRICE
+        assert abs(call_kwargs["size"] - expected_shares) < 0.01

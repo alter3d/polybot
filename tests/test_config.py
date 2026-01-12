@@ -79,6 +79,11 @@ class TestConfigDefaults:
         config = Config()
         assert config.funder_address == ""
 
+    def test_default_reversal_multiplier(self):
+        """Verify default reversal multiplier is 1.5."""
+        config = Config()
+        assert config.reversal_multiplier == 1.5
+
 
 class TestConfigFromEnv:
     """Test environment variable configuration loading."""
@@ -92,6 +97,7 @@ class TestConfigFromEnv:
             assert config.monitor_start_minutes_before_end == 3
             assert config.log_level == "INFO"
             assert config.series_ids == []
+            assert config.reversal_multiplier == 1.5
 
     def test_from_env_opportunity_threshold_override(self):
         """Verify OPPORTUNITY_THRESHOLD env var overrides default."""
@@ -264,6 +270,19 @@ class TestConfigFromEnv:
             assert config.signature_type == 1
             assert config.funder_address == "0xfunder1234567890abcdef1234567890abcdef1234"
 
+    def test_from_env_reversal_multiplier_override(self):
+        """Verify REVERSAL_MULTIPLIER env var overrides default."""
+        with patch.dict(os.environ, {"REVERSAL_MULTIPLIER": "2.0"}, clear=True):
+            config = Config.from_env()
+            assert config.reversal_multiplier == 2.0
+
+    def test_from_env_reversal_multiplier_float_conversion(self):
+        """Verify reversal_multiplier is correctly converted to float."""
+        with patch.dict(os.environ, {"REVERSAL_MULTIPLIER": "2.5"}, clear=True):
+            config = Config.from_env()
+            assert isinstance(config.reversal_multiplier, float)
+            assert config.reversal_multiplier == 2.5
+
 
 class TestConfigDataclass:
     """Test Config dataclass behavior."""
@@ -324,6 +343,11 @@ class TestConfigDataclass:
         )
         assert config.signature_type == 1
         assert config.funder_address == "0xfunder1234567890abcdef"
+
+    def test_config_custom_reversal_multiplier(self):
+        """Verify Config can be instantiated with custom reversal_multiplier."""
+        config = Config(reversal_multiplier=2.5)
+        assert config.reversal_multiplier == 2.5
 
     def test_config_equality(self):
         """Verify two Config instances with same values are equal."""
@@ -438,3 +462,21 @@ class TestConfigEdgeCases:
         with patch.dict(os.environ, {"FUNDER_ADDRESS": ""}, clear=True):
             config = Config.from_env()
             assert config.funder_address == ""
+
+    def test_from_env_reversal_multiplier_one(self):
+        """Verify reversal multiplier of 1.0 (no multiplier) is valid."""
+        with patch.dict(os.environ, {"REVERSAL_MULTIPLIER": "1.0"}, clear=True):
+            config = Config.from_env()
+            assert config.reversal_multiplier == 1.0
+
+    def test_from_env_reversal_multiplier_large(self):
+        """Verify large reversal multiplier values are valid."""
+        with patch.dict(os.environ, {"REVERSAL_MULTIPLIER": "5.0"}, clear=True):
+            config = Config.from_env()
+            assert config.reversal_multiplier == 5.0
+
+    def test_from_env_reversal_multiplier_invalid_raises_error(self):
+        """Verify invalid reversal multiplier value raises ValueError."""
+        with patch.dict(os.environ, {"REVERSAL_MULTIPLIER": "not-a-number"}, clear=True):
+            with pytest.raises(ValueError):
+                Config.from_env()

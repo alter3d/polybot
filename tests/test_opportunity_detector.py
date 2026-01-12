@@ -283,6 +283,48 @@ class TestDetectOpportunity:
         assert len(opportunities) == 1
         assert opportunities[0].side == "YES"
 
+    def test_opportunity_side_from_outcome_no(self):
+        """Verify opportunity side is set from outcome parameter (NO)."""
+        opportunities = detect_opportunity(
+            last_trade_price=0.80,
+            threshold=0.70,
+            market_id="btc-15min",
+            outcome="NO",
+        )
+        assert len(opportunities) == 1
+        assert opportunities[0].side == "NO"
+
+    def test_opportunity_side_from_outcome_yes(self):
+        """Verify opportunity side is set from outcome parameter (YES)."""
+        opportunities = detect_opportunity(
+            last_trade_price=0.80,
+            threshold=0.70,
+            market_id="btc-15min",
+            outcome="YES",
+        )
+        assert len(opportunities) == 1
+        assert opportunities[0].side == "YES"
+
+    def test_opportunity_outcome_normalized_to_uppercase(self):
+        """Verify outcome is normalized to uppercase (handles 'Yes', 'No')."""
+        opportunities = detect_opportunity(
+            last_trade_price=0.80,
+            threshold=0.70,
+            market_id="btc-15min",
+            outcome="Yes",  # Mixed case from API
+        )
+        assert len(opportunities) == 1
+        assert opportunities[0].side == "YES"
+
+        opportunities_no = detect_opportunity(
+            last_trade_price=0.80,
+            threshold=0.70,
+            market_id="btc-15min-2",
+            outcome="no",  # Lowercase
+        )
+        assert len(opportunities_no) == 1
+        assert opportunities_no[0].side == "NO"
+
     def test_opportunity_detected_at_is_datetime(self):
         """Verify detected_at is a datetime instance."""
         opportunities = detect_opportunity(

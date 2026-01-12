@@ -403,7 +403,7 @@ class TradeExecutor(BaseNotifier):
         logger.warning("Opportunity has no token_id or market_id")
         return None
 
-    def _execute_trade(self, opportunity: Opportunity) -> bool:
+    def _execute_trade(self, opportunity: Opportunity, multiplier: float = 1.0) -> bool:
         """Execute a trade for the given opportunity.
 
         Creates and submits a limit order at $0.99 for the configured
@@ -411,6 +411,7 @@ class TradeExecutor(BaseNotifier):
 
         Args:
             opportunity: The opportunity to trade on.
+            multiplier: Position size multiplier for reversal trading (default 1.0).
 
         Returns:
             True if order was submitted successfully, False otherwise.
@@ -426,7 +427,9 @@ class TradeExecutor(BaseNotifier):
             )
             return False
 
-        shares = self._calculate_shares(self._config.trade_amount_usd)
+        # Apply multiplier to base trade amount
+        effective_amount = self._config.trade_amount_usd * multiplier
+        shares = self._calculate_shares(effective_amount)
 
         # Validate order parameters
         if shares <= 0:
@@ -438,15 +441,30 @@ class TradeExecutor(BaseNotifier):
 
         token_display = token_id[:40] + "..." if len(token_id) > 40 else token_id
 
-        logger.info(
-            "Executing trade: %s %s @ $%.2f (%.2f shares) for %s (neg_risk=%s)",
-            "BUY",
-            opportunity.side,
-            LIMIT_PRICE,
-            shares,
-            token_display,
-            opportunity.neg_risk,
-        )
+        # Log with multiplier info when scaling is applied
+        if multiplier > 1.0:
+            logger.info(
+                "Executing trade: %s %s @ $%.2f (%.2f shares, $%.2f = $%.2f × %.1fx) for %s (neg_risk=%s)",
+                "BUY",
+                opportunity.side,
+                LIMIT_PRICE,
+                shares,
+                effective_amount,
+                self._config.trade_amount_usd,
+                multiplier,
+                token_display,
+                opportunity.neg_risk,
+            )
+        else:
+            logger.info(
+                "Executing trade: %s %s @ $%.2f (%.2f shares) for %s (neg_risk=%s)",
+                "BUY",
+                opportunity.side,
+                LIMIT_PRICE,
+                shares,
+                token_display,
+                opportunity.neg_risk,
+            )
 
         # Attempt trade with retry logic for transient errors
         last_error: Optional[TradeExecutionError] = None
@@ -534,7 +552,7 @@ class TradeExecutor(BaseNotifier):
         )
         return True
 
-    def notify(self, opportunity: Opportunity) -> bool:
+    def notify(self, opportunity: Opportunity, multiplier: float = 1.0) -> bool:
         """Execute a trade for a detected opportunity.
 
         Implements the BaseNotifier interface. When trading is enabled,
@@ -543,6 +561,7 @@ class TradeExecutor(BaseNotifier):
 
         Args:
             opportunity: The opportunity to trade on.
+            multiplier: Position size multiplier for reversal trading (default 1.0).
 
         Returns:
             True if trade was executed successfully, False otherwise.
@@ -556,7 +575,7 @@ class TradeExecutor(BaseNotifier):
             return True
 
         try:
-            return self._execute_trade(opportunity)
+            return self._execute_trade(opportunity, multiplier=multiplier)
         except Exception as e:
             # Catch-all to ensure we never crash the monitoring loop
             logger.error("Unexpected error during trade execution: %s", e)
