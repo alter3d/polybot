@@ -73,9 +73,6 @@ class APIError(TradeExecutionError):
 MAX_RETRIES = 1
 RETRY_DELAY_SECONDS = 1.0
 
-# Fixed limit price for all orders
-LIMIT_PRICE = 0.90
-
 
 class TradeExecutor(BaseNotifier):
     """Trade executor that implements the BaseNotifier interface.
@@ -141,7 +138,7 @@ class TradeExecutor(BaseNotifier):
                 "TradeExecutor initialized: $%.2f per trade (%.2f shares @ $%.2f)",
                 config.trade_amount_usd,
                 shares,
-                LIMIT_PRICE,
+                self._config.limit_price,
             )
         except Exception as e:
             logger.error("Failed to initialize trading client: %s", e)
@@ -206,15 +203,15 @@ class TradeExecutor(BaseNotifier):
     def _calculate_shares(self, amount_usd: float) -> float:
         """Calculate the number of shares for a given dollar amount.
 
-        Shares are calculated based on the fixed limit price of $0.99.
+        Shares are calculated based on the configured limit price.
 
         Args:
             amount_usd: Dollar amount to invest.
 
         Returns:
-            Number of shares to purchase (e.g., $20 / $0.99 = 20.20 shares).
+            Number of shares to purchase (e.g., $20 / $0.90 = 22.22 shares).
         """
-        return amount_usd / LIMIT_PRICE
+        return amount_usd / self._config.limit_price
 
     def _categorize_error(self, error: Exception) -> TradeExecutionError:
         """Categorize an exception into a specific TradeExecutionError type.
@@ -447,7 +444,7 @@ class TradeExecutor(BaseNotifier):
                 "Executing trade: %s %s @ $%.2f (%.2f shares, $%.2f = $%.2f × %.1fx) for %s (neg_risk=%s)",
                 "BUY",
                 opportunity.side,
-                LIMIT_PRICE,
+                self._config.limit_price,
                 shares,
                 effective_amount,
                 self._config.trade_amount_usd,
@@ -460,7 +457,7 @@ class TradeExecutor(BaseNotifier):
                 "Executing trade: %s %s @ $%.2f (%.2f shares) for %s (neg_risk=%s)",
                 "BUY",
                 opportunity.side,
-                LIMIT_PRICE,
+                self._config.limit_price,
                 shares,
                 token_display,
                 opportunity.neg_risk,
@@ -528,7 +525,7 @@ class TradeExecutor(BaseNotifier):
         # Create order arguments
         order_args = OrderArgs(
             token_id=token_id,
-            price=LIMIT_PRICE,
+            price=self._config.limit_price,
             size=shares,
             side="BUY",
         )

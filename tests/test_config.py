@@ -84,6 +84,11 @@ class TestConfigDefaults:
         config = Config()
         assert config.reversal_multiplier == 1.5
 
+    def test_default_limit_price(self):
+        """Verify default limit price is 0.90."""
+        config = Config()
+        assert config.limit_price == 0.90
+
 
 class TestConfigFromEnv:
     """Test environment variable configuration loading."""
@@ -98,6 +103,7 @@ class TestConfigFromEnv:
             assert config.log_level == "INFO"
             assert config.series_ids == []
             assert config.reversal_multiplier == 1.5
+            assert config.limit_price == 0.90
 
     def test_from_env_opportunity_threshold_override(self):
         """Verify OPPORTUNITY_THRESHOLD env var overrides default."""
@@ -283,6 +289,19 @@ class TestConfigFromEnv:
             assert isinstance(config.reversal_multiplier, float)
             assert config.reversal_multiplier == 2.5
 
+    def test_from_env_limit_price_override(self):
+        """Verify LIMIT_PRICE env var overrides default."""
+        with patch.dict(os.environ, {"LIMIT_PRICE": "0.85"}, clear=True):
+            config = Config.from_env()
+            assert config.limit_price == 0.85
+
+    def test_from_env_limit_price_float_conversion(self):
+        """Verify limit_price is correctly converted to float."""
+        with patch.dict(os.environ, {"LIMIT_PRICE": "0.95"}, clear=True):
+            config = Config.from_env()
+            assert isinstance(config.limit_price, float)
+            assert config.limit_price == 0.95
+
 
 class TestConfigDataclass:
     """Test Config dataclass behavior."""
@@ -348,6 +367,11 @@ class TestConfigDataclass:
         """Verify Config can be instantiated with custom reversal_multiplier."""
         config = Config(reversal_multiplier=2.5)
         assert config.reversal_multiplier == 2.5
+
+    def test_config_custom_limit_price(self):
+        """Verify Config can be instantiated with custom limit_price."""
+        config = Config(limit_price=0.85)
+        assert config.limit_price == 0.85
 
     def test_config_equality(self):
         """Verify two Config instances with same values are equal."""
@@ -478,5 +502,23 @@ class TestConfigEdgeCases:
     def test_from_env_reversal_multiplier_invalid_raises_error(self):
         """Verify invalid reversal multiplier value raises ValueError."""
         with patch.dict(os.environ, {"REVERSAL_MULTIPLIER": "not-a-number"}, clear=True):
+            with pytest.raises(ValueError):
+                Config.from_env()
+
+    def test_from_env_limit_price_zero(self):
+        """Verify zero limit price is valid."""
+        with patch.dict(os.environ, {"LIMIT_PRICE": "0.0"}, clear=True):
+            config = Config.from_env()
+            assert config.limit_price == 0.0
+
+    def test_from_env_limit_price_one(self):
+        """Verify limit price of 1.0 (100%) is valid."""
+        with patch.dict(os.environ, {"LIMIT_PRICE": "1.0"}, clear=True):
+            config = Config.from_env()
+            assert config.limit_price == 1.0
+
+    def test_from_env_limit_price_invalid_raises_error(self):
+        """Verify invalid limit price value raises ValueError."""
+        with patch.dict(os.environ, {"LIMIT_PRICE": "not-a-number"}, clear=True):
             with pytest.raises(ValueError):
                 Config.from_env()

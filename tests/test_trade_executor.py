@@ -13,7 +13,6 @@ from src.config import Config
 from src.market.opportunity_detector import Opportunity
 from src.notifications.console import BaseNotifier
 from src.trading.executor import (
-    LIMIT_PRICE,
     MAX_RETRIES,
     RETRY_DELAY_SECONDS,
     APIError,
@@ -221,18 +220,19 @@ class TestTradeExecutorShareCalculation:
         shares = executor._calculate_shares(100.0)
         assert abs(shares - 111.11) < 0.01
 
-    def test_calculate_shares_uses_limit_price(self):
-        """Verify share calculation uses the LIMIT_PRICE constant."""
-        config = Config(auto_trade_enabled=False)
+    def test_calculate_shares_uses_config_limit_price(self):
+        """Verify share calculation uses config.limit_price."""
+        config = Config(auto_trade_enabled=False, limit_price=0.85)
         executor = TradeExecutor(config)
         amount = 50.0
         shares = executor._calculate_shares(amount)
-        expected = amount / LIMIT_PRICE
+        expected = amount / config.limit_price
         assert shares == expected
 
-    def test_limit_price_is_ninety_cents(self):
-        """Verify LIMIT_PRICE constant is $0.90."""
-        assert LIMIT_PRICE == 0.90
+    def test_default_limit_price_is_ninety_cents(self):
+        """Verify default config.limit_price is $0.90."""
+        config = Config(auto_trade_enabled=False)
+        assert config.limit_price == 0.90
 
 
 class TestTradeExecutorNotify:
@@ -828,7 +828,7 @@ class TestTradeExecutorIntegration:
         mock_order_args.assert_called_once()
         call_kwargs = mock_order_args.call_args[1]
         assert call_kwargs["token_id"] == clob_token_id
-        assert call_kwargs["price"] == LIMIT_PRICE
+        assert call_kwargs["price"] == config.limit_price
         assert abs(call_kwargs["size"] - 22.22) < 0.01
         assert call_kwargs["side"] == "BUY"
 
@@ -971,8 +971,8 @@ class TestTradeExecutorMultiplierAppliedSizing:
         # Verify OrderArgs was called with base trade amount shares
         mock_order_args.assert_called_once()
         call_kwargs = mock_order_args.call_args[1]
-        # $20.00 / $0.90 = 22.22 shares (LIMIT_PRICE is 0.90)
-        expected_shares = 20.0 / LIMIT_PRICE
+        # $20.00 / $0.90 = 22.22 shares (config.limit_price is 0.90)
+        expected_shares = 20.0 / config.limit_price
         assert abs(call_kwargs["size"] - expected_shares) < 0.01
 
     @patch("src.trading.executor.ClobClient")
@@ -1007,7 +1007,7 @@ class TestTradeExecutorMultiplierAppliedSizing:
 
         mock_order_args.assert_called_once()
         call_kwargs = mock_order_args.call_args[1]
-        expected_shares = 20.0 / LIMIT_PRICE
+        expected_shares = 20.0 / config.limit_price
         assert abs(call_kwargs["size"] - expected_shares) < 0.01
 
     @patch("src.trading.executor.ClobClient")
@@ -1043,7 +1043,7 @@ class TestTradeExecutorMultiplierAppliedSizing:
         mock_order_args.assert_called_once()
         call_kwargs = mock_order_args.call_args[1]
         # $20.00 * 2.0 / $0.90 = 44.44 shares
-        expected_shares = (20.0 * 2.0) / LIMIT_PRICE
+        expected_shares = (20.0 * 2.0) / config.limit_price
         assert abs(call_kwargs["size"] - expected_shares) < 0.01
 
     @patch("src.trading.executor.ClobClient")
@@ -1079,7 +1079,7 @@ class TestTradeExecutorMultiplierAppliedSizing:
         mock_order_args.assert_called_once()
         call_kwargs = mock_order_args.call_args[1]
         # $50.00 * 3.0 / $0.90 = 166.67 shares
-        expected_shares = (50.0 * 3.0) / LIMIT_PRICE
+        expected_shares = (50.0 * 3.0) / config.limit_price
         assert abs(call_kwargs["size"] - expected_shares) < 0.01
 
     @patch("src.trading.executor.ClobClient")
@@ -1113,7 +1113,7 @@ class TestTradeExecutorMultiplierAppliedSizing:
         mock_order_args.assert_called_once()
         call_kwargs = mock_order_args.call_args[1]
         # $30.00 * 1.5 / $0.90 = 50.00 shares
-        expected_shares = (30.0 * 1.5) / LIMIT_PRICE
+        expected_shares = (30.0 * 1.5) / config.limit_price
         assert abs(call_kwargs["size"] - expected_shares) < 0.01
 
     @patch("src.trading.executor.ClobClient")
@@ -1168,7 +1168,7 @@ class TestTradeExecutorMultiplierAppliedSizing:
         mock_order_args.assert_called_once()
         call_kwargs = mock_order_args.call_args[1]
         # $10.00 * 2.0 / $0.90 = 22.22 shares
-        expected_shares = (10.0 * 2.0) / LIMIT_PRICE
+        expected_shares = (10.0 * 2.0) / config.limit_price
         assert abs(call_kwargs["size"] - expected_shares) < 0.01
 
     @patch("src.trading.executor.ClobClient")
@@ -1205,5 +1205,5 @@ class TestTradeExecutorMultiplierAppliedSizing:
         mock_order_args.assert_called_once()
         call_kwargs = mock_order_args.call_args[1]
         # $25.00 * 2.0 / $0.90 = 55.56 shares
-        expected_shares = (25.0 * 2.0) / LIMIT_PRICE
+        expected_shares = (25.0 * 2.0) / config.limit_price
         assert abs(call_kwargs["size"] - expected_shares) < 0.01
