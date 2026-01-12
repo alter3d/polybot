@@ -943,7 +943,6 @@ Examples:
 
 Environment variables:
   OPPORTUNITY_THRESHOLD   Price threshold (default: 0.70)
-  SHARES_TO_TRADE         Shares per trade (default: 20)
   MONITOR_START_MINUTES   Minutes before window end (default: 3)
   SERIES_IDS              Comma-separated list of Polymarket series IDs to monitor
   LOG_LEVEL               Logging verbosity (default: INFO)
@@ -994,7 +993,6 @@ def main() -> int:
     if args.dry_run:
         print("Configuration valid:")
         print(f"  Threshold: ${config.opportunity_threshold:.2f}")
-        print(f"  Shares to trade: {config.shares_to_trade}")
         print(f"  Trade amount USD: ${config.trade_amount_usd:.2f}")
         print(f"  Reversal multiplier: {config.reversal_multiplier:.1f}x")
         print(f"  Auto trade enabled: {config.auto_trade_enabled}")
