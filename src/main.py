@@ -899,10 +899,6 @@ class PolymarketMonitor:
         # Setup logging
         self._setup_logging()
 
-        # Initialize TradeExecutor after logging is configured
-        # This ensures all initialization logs (including any errors) are captured
-        self._trade_executor = TradeExecutor(self._config)
-
         # Initialize TradeRepository for database persistence
         # Gracefully disables if DATABASE_URL not configured
         self._repository = TradeRepository(self._config.database_url)
@@ -910,6 +906,10 @@ class PolymarketMonitor:
         # Initialize TradeTrackingCallback for WebSocket trade/order updates
         # This processes OrderMessage and TradeMessage events to update database
         self._trade_callbacks = TradeTrackingCallback(self._repository)
+
+        # Initialize TradeExecutor after logging and repository are configured
+        # This ensures all initialization logs are captured and trades can be persisted
+        self._trade_executor = TradeExecutor(self._config, repository=self._repository)
 
         # Run trade reconciliation BEFORE websocket connections
         # This syncs database state with CLOB API for any missed updates while offline
