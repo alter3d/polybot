@@ -6,6 +6,7 @@ trades on detected opportunities via the Polymarket CLOB API.
 
 import logging
 import time
+from decimal import Decimal
 from typing import Optional
 
 from py_clob_client.client import ClobClient
@@ -13,6 +14,8 @@ from py_clob_client.clob_types import OrderArgs, OrderType, PartialCreateOrderOp
 from py_clob_client.constants import POLYGON
 
 from src.config import Config
+from src.db import OrderSide, TradeSide
+from src.db.models import Trade
 from src.db.repository import TradeRepository
 from src.market.opportunity_detector import Opportunity
 from src.notifications.console import BaseNotifier
@@ -474,7 +477,7 @@ class TradeExecutor(BaseNotifier):
 
         for attempt in range(1, MAX_RETRIES + 2):  # +2 because range is exclusive
             try:
-                return self._submit_order(token_id, shares, opportunity.neg_risk)
+                return self._submit_order(opportunity, shares)
 
             except Exception as e:
                 # Categorize the error for proper handling
@@ -508,16 +511,16 @@ class TradeExecutor(BaseNotifier):
 
         return False
 
-    def _submit_order(self, token_id: str, shares: float, neg_risk: bool = False) -> bool:
+    def _submit_order(self, opportunity: Opportunity, shares: float) -> bool:
         """Submit a limit order to the CLOB API.
 
         This is the core order submission logic, separated to allow
-        for retry handling in _execute_trade.
+        for retry handling in _execute_trade. Creates a trade record
+        in the database after successful order submission.
 
         Args:
-            token_id: The token to trade.
+            opportunity: The opportunity containing market and token information.
             shares: Number of shares to purchase.
-            neg_risk: Whether this is a negative risk market.
 
         Returns:
             True if order was submitted successfully.
@@ -527,6 +530,9 @@ class TradeExecutor(BaseNotifier):
         """
         if not self._client:
             raise RuntimeError("CLOB client not initialized")
+
+        token_id = opportunity.token_id or opportunity.market_id
+        neg_risk = opportunity.neg_risk
 
         # Create order arguments
         order_args = OrderArgs(
@@ -553,7 +559,106 @@ class TradeExecutor(BaseNotifier):
             neg_risk,
             response if response else "no response data",
         )
+
+        # Create trade record after successful order submission
+        self._create_trade_record(opportunity, shares, response)
+
         return True
+
+    def _create_trade_record(
+        self,
+        opportunity: Opportunity,
+        shares: float,
+        response: Optional[dict],
+    ) -> None:
+        """Create a trade record in the database after successful order submission.
+
+        Gracefully handles missing repository or database errors without
+        affecting order execution. Trade tracking is optional functionality.
+
+        Args:
+            opportunity: The opportunity containing market and token information.
+            shares: Number of shares purchased.
+            response: API response from order submission (may contain order_id).
+        """
+        if not self._repository or not self._repository.is_enabled:
+            logger.debug("Trade repository not available, skipping trade record")
+            return
+
+        try:
+            # Get or create wallet record
+            wallet_address = self._get_wallet_address()
+            if not wallet_address:
+                logger.warning("No wallet address available, skipping trade record")
+                return
+
+            wallet = self._repository.get_or_create_wallet(
+                address=wallet_address,
+                signature_type=self._config.signature_type,
+            )
+            if not wallet or not wallet.id:
+                logger.warning("Failed to get/create wallet record")
+                return
+
+            # Get or create market record
+            market = self._repository.get_or_create_market(
+                condition_id=opportunity.market_id,
+            )
+            if not market or not market.id:
+                logger.warning("Failed to get/create market record")
+                return
+
+            # Extract order_id from response if available
+            order_id = None
+            if response and isinstance(response, dict):
+                order_id = response.get("orderID") or response.get("order_id")
+
+            # Map opportunity side to TradeSide enum
+            trade_side = TradeSide.YES if opportunity.side.upper() == "YES" else TradeSide.NO
+
+            # Create trade record
+            trade = Trade(
+                wallet_id=wallet.id,
+                market_id=market.id,
+                token_id=opportunity.token_id or opportunity.market_id,
+                side=trade_side,
+                order_type=OrderSide.BUY,
+                quantity=Decimal(str(shares)),
+                limit_price=Decimal(str(self._config.limit_price)),
+                order_id=order_id,
+                neg_risk=opportunity.neg_risk,
+            )
+
+            created_trade = self._repository.create_trade(trade)
+            if created_trade:
+                logger.info(
+                    "Trade record created: %s %s @ $%.2f (ID: %s)",
+                    trade.order_type.value,
+                    trade.side.value,
+                    trade.limit_price,
+                    created_trade.id,
+                )
+            else:
+                logger.warning("Failed to create trade record")
+
+        except Exception as e:
+            # Don't let trade tracking failures affect order execution
+            logger.error("Error creating trade record: %s", e)
+
+    def _get_wallet_address(self) -> Optional[str]:
+        """Get the wallet address from the CLOB client.
+
+        Returns:
+            Wallet address string, or None if not available.
+        """
+        if not self._client:
+            return None
+        try:
+            # The client stores the wallet address after initialization
+            return self._client.get_address()
+        except Exception as e:
+            logger.debug("Could not get wallet address: %s", e)
+            return None
 
     def notify(self, opportunity: Opportunity, multiplier: float = 1.0) -> bool:
         """Execute a trade for a detected opportunity.
