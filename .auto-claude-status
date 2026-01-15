@@ -1,25 +1,25 @@
 {
   "active": true,
-  "spec": "016-currently-we-wait-monitor-start-minutes-minutes-be",
-  "state": "building",
+  "spec": "007-create-a-postgres-database-schema-to-track-open-an",
+  "state": "planning",
   "subtasks": {
-    "completed": 9,
-    "total": 10,
+    "completed": 0,
+    "total": 0,
     "in_progress": 1,
     "failed": 0
   },
   "phase": {
-    "current": "Integration Testing",
+    "current": "Database Schema",
     "id": null,
-    "total": 3
+    "total": 2
   },
   "workers": {
     "active": 0,
     "max": 1
   },
   "session": {
-    "number": 10,
-    "started_at": "2026-01-13T22:57:48.708167"
+    "number": 2,
+    "started_at": "2026-01-14T02:00:46.713809"
   },
-  "last_update": "2026-01-13T23:18:50.561358"
+  "last_update": "2026-01-14T02:05:49.890468"
 }
