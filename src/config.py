@@ -25,6 +25,7 @@ class Config:
         clob_host: CLOB API endpoint
         gamma_host: Gamma API endpoint for market discovery
         ws_host: WebSocket endpoint for real-time market data
+        ws_user_host: WebSocket endpoint for user channel (trade/order updates)
         log_level: Logging verbosity level (default: INFO)
         series_ids: List of Polymarket series IDs to monitor. A series is a higher-level
                    abstraction that encapsulates all recurring instances of an event/market
@@ -48,6 +49,7 @@ class Config:
     clob_host: str = "https://clob.polymarket.com"
     gamma_host: str = "https://gamma-api.polymarket.com"
     ws_host: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+    ws_user_host: str = "wss://ws-subscriptions-clob.polymarket.com/ws/user"
 
     # Logging
     log_level: str = "INFO"
@@ -71,6 +73,7 @@ class Config:
             LIMIT_PRICE: Limit price multiplier for order placement (default: 0.90)
             MONITOR_START_MINUTES: Minutes before window end to start monitoring (default: 3)
             LOG_LEVEL: Logging verbosity (default: INFO)
+            WS_USER_HOST: WebSocket endpoint for user channel (default: wss://ws-subscriptions-clob.polymarket.com/ws/user)
             SERIES_IDS: Comma-separated list of Polymarket series IDs to monitor
 
         Returns:
@@ -95,5 +98,6 @@ class Config:
             limit_price=float(environ.get("LIMIT_PRICE", "0.90")),
             monitor_start_minutes_before_end=int(environ.get("MONITOR_START_MINUTES", "3")),
             log_level=environ.get("LOG_LEVEL", "INFO"),
+            ws_user_host=environ.get("WS_USER_HOST", "wss://ws-subscriptions-clob.polymarket.com/ws/user"),
             series_ids=series_ids,
         )

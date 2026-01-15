@@ -10,12 +10,12 @@ This module provides the main monitoring loop that integrates all components:
 - Console notifications
 
 The monitoring workflow operates on 15-minute windows:
-1. Wait until 3 minutes before window end
-2. Discover active crypto markets
-3. Subscribe to WebSocket for real-time prices
-4. Detect opportunities when prices exceed threshold
-5. Output notifications to console
-6. Repeat for next window
+1. Discover active crypto markets when market period starts
+2. Subscribe to WebSocket for real-time prices immediately
+3. Detect opportunities when prices exceed threshold
+4. Output notifications to console
+5. Transition to next market when period ends
+6. Repeat for next market period
 
 Usage:
     python -m src.main           # Run as module (recommended)
@@ -47,15 +47,15 @@ from src.api.websocket_handler import (
     LastTradePrice,
     MarketWebSocket,
     OrderBookUpdate,
+    OrderMessage,
     PriceChange,
+    TradeMessage,
+    UserChannelWebSocket,
 )
 from src.config import Config
 from src.market.opportunity_detector import Opportunity, detect_opportunity
 from src.market.timing import (
-    format_window_info,
     get_current_market_window,
-    should_start_monitoring,
-    time_until_monitoring_starts,
     time_until_window_ends,
 )
 from src.notifications.console import ConsoleNotifier
@@ -98,6 +98,7 @@ class PolymarketMonitor:
         self._clob_client: PolymarketClobClient | None = None
         self._gamma_client: GammaClient | None = None
         self._websocket: MarketWebSocket | None = None
+        self._user_websocket: UserChannelWebSocket | None = None
         self._notifier = ConsoleNotifier()
         # TradeExecutor is initialized later in run() after logging is configured
         # This ensures all initialization logs are captured
@@ -323,6 +324,44 @@ class PolymarketMonitor:
 
         except Exception as e:
             logger.error("Error handling WebSocket message: %s", e)
+
+    def _on_user_channel_message(self, msg_type: str, data: Any) -> None:
+        """Handle incoming user channel WebSocket messages.
+
+        Logs trade and order messages for visibility. No business logic execution
+        yet - this is a framework for future trade/order event handling.
+
+        Args:
+            msg_type: Type of the message (trade, order, subscribed, etc.).
+            data: Parsed message data.
+        """
+        if isinstance(data, TradeMessage):
+            # Log trade executions at INFO level for visibility
+            logger.info(
+                "Received trade: id=%s side=%s price=%.4f size=%.4f status=%s",
+                data.trade_id[:8] if data.trade_id else "unknown",
+                data.side,
+                data.price,
+                data.size,
+                data.status or "FILLED",
+            )
+        elif isinstance(data, OrderMessage):
+            # Log order updates at INFO level for visibility
+            logger.info(
+                "Received order update: id=%s side=%s price=%.4f status=%s matched=%.4f/%.4f",
+                data.order_id[:8] if data.order_id else "unknown",
+                data.side,
+                data.price,
+                data.status,
+                data.size_matched,
+                data.original_size,
+            )
+        elif msg_type == "subscribed":
+            # Log successful subscription confirmation
+            logger.info("User channel subscription confirmed")
+        else:
+            # Log other message types at debug level to avoid spam
+            logger.debug("User channel message: type=%s", msg_type)
 
     def _handle_order_book_update(self, update: OrderBookUpdate) -> None:
         """Process order book update and check for opportunities.
@@ -622,34 +661,6 @@ class PolymarketMonitor:
         )
         return True
 
-    def _wait_for_monitoring_window(self) -> bool:
-        """Wait until the monitoring window starts.
-
-        Returns:
-            True if we should continue monitoring, False if shutdown requested.
-        """
-        while not self._shutdown_requested:
-            if should_start_monitoring(self._config.monitor_start_minutes_before_end):
-                return True
-
-            wait_time = time_until_monitoring_starts(
-                self._config.monitor_start_minutes_before_end
-            )
-
-            if wait_time.total_seconds() > 0:
-                # Show status while waiting
-                print(f"\r{format_window_info(self._config.monitor_start_minutes_before_end)}", end="")
-
-                # Sleep in small intervals to allow for quick shutdown response
-                sleep_duration = min(wait_time.total_seconds(), 5.0)
-                time.sleep(sleep_duration)
-            else:
-                # Already in monitoring window
-                print()  # Clear the status line
-                return True
-
-        return False
-
     def _monitor_window(self) -> None:
         """Monitor for opportunities with continuous market lifecycle management.
 
@@ -863,7 +874,6 @@ class PolymarketMonitor:
         print("=" * 60)
         print("Starting Polymarket Monitor...")
         print(f"  Threshold: ${self._config.opportunity_threshold:.2f}")
-        print(f"  Monitor window: {self._config.monitor_start_minutes_before_end} minutes before end")
         if self._config.series_ids:
             print(f"  Series IDs: {', '.join(self._config.series_ids)}")
         else:
@@ -878,6 +888,21 @@ class PolymarketMonitor:
         # This ensures all initialization logs (including any errors) are captured
         self._trade_executor = TradeExecutor(self._config)
 
+        # Initialize user channel WebSocket for trade/order updates
+        # This runs in background thread and auto-reconnects on disconnect
+        # Gracefully skips if PRIVATE_KEY not set (UserChannelWebSocket handles this)
+        self._user_websocket = UserChannelWebSocket(
+            config=self._config,
+            on_message=self._on_user_channel_message,
+            auto_reconnect=True,
+        )
+        if self._user_websocket.is_enabled:
+            self._user_websocket.connect()
+            self._user_websocket.run(blocking=False)
+            logger.info("User channel WebSocket started in background")
+        else:
+            logger.info("User channel WebSocket disabled (no credentials)")
+
         # Initialize API clients
         if not self._initialize_clients():
             logger.error("Failed to initialize clients, exiting")
@@ -886,17 +911,9 @@ class PolymarketMonitor:
         logger.info("Polymarket Monitor started successfully")
 
         try:
-            while not self._shutdown_requested:
-                # Wait for monitoring window
-                if not self._wait_for_monitoring_window():
-                    break  # Shutdown requested
-
-                # Monitor current window
-                self._monitor_window()
-
-                # Small delay before checking for next window
-                if not self._shutdown_requested:
-                    time.sleep(1.0)
+            # Subscribe immediately when market period starts - no delay
+            # _monitor_window handles continuous market lifecycle management
+            self._monitor_window()
 
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt received")
@@ -907,7 +924,10 @@ class PolymarketMonitor:
         logger.info("Polymarket Monitor stopped")
 
     def stop(self) -> None:
-        """Stop the monitor and clean up resources."""
+        """Stop the monitor and clean up resources.
+
+        Cleanly shuts down market WebSocket, user_channel WebSocket, and API clients.
+        """
         if not self._running:
             return
 
@@ -915,8 +935,15 @@ class PolymarketMonitor:
         self._running = False
         self._shutdown_requested = True
 
-        # Stop WebSocket
+        # Stop market WebSocket
         self._stop_websocket()
+
+        # Stop user channel WebSocket
+        if self._user_websocket:
+            logger.info("Stopping user channel WebSocket...")
+            self._user_websocket.stop(timeout=5.0)
+            self._user_websocket = None
+            logger.info("User channel WebSocket stopped")
 
         # Close API clients
         if self._gamma_client:

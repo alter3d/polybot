@@ -3,6 +3,9 @@
 This module provides a WebSocket client for subscribing to real-time market data
 from the Polymarket CLOB WebSocket feed. It handles connection management,
 automatic reconnection with exponential backoff, and message parsing.
+
+It also provides a UserChannelWebSocket client for authenticated user channel
+subscriptions to receive trade and order execution updates.
 """
 
 import json
@@ -11,9 +14,11 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 import websocket
+from py_clob_client.client import ClobClient
+from py_clob_client.constants import POLYGON
 
 from src.config import Config
 
@@ -85,6 +90,72 @@ class LastTradePrice:
     asset_id: str
     price: float
     timestamp: int
+
+
+@dataclass
+class TradeMessage:
+    """Represents a trade execution message from the user channel.
+
+    Attributes:
+        trade_id: Unique identifier for this trade.
+        order_id: The order ID that was filled.
+        asset_id: Token ID for this trade.
+        market_id: Condition ID (market) for this trade.
+        side: Order side ("BUY" or "SELL").
+        price: Execution price.
+        size: Amount filled in this trade.
+        timestamp: When the trade occurred (Unix timestamp in milliseconds).
+        fee: Trading fee for this trade.
+        maker_address: Address of the maker.
+        taker_order_id: ID of the taker order.
+        status: Trade status.
+    """
+
+    trade_id: str
+    order_id: str
+    asset_id: str
+    market_id: str
+    side: str
+    price: float
+    size: float
+    timestamp: int
+    fee: float = 0.0
+    maker_address: str = ""
+    taker_order_id: str = ""
+    status: str = ""
+
+
+@dataclass
+class OrderMessage:
+    """Represents an order status update message from the user channel.
+
+    Attributes:
+        order_id: Unique identifier for this order.
+        asset_id: Token ID for this order.
+        market_id: Condition ID (market) for this order.
+        side: Order side ("BUY" or "SELL").
+        price: Order price.
+        original_size: Original size of the order.
+        size_matched: Amount that has been filled.
+        status: Order status (e.g., "LIVE", "MATCHED", "CANCELLED").
+        timestamp: Last update time (Unix timestamp in milliseconds).
+        expiration: Order expiration timestamp.
+        order_type: Type of order (e.g., "GTC", "FOK", "GTD").
+        owner: Address of the order owner.
+    """
+
+    order_id: str
+    asset_id: str
+    market_id: str
+    side: str
+    price: float
+    original_size: float
+    size_matched: float
+    status: str
+    timestamp: int
+    expiration: int = 0
+    order_type: str = ""
+    owner: str = ""
 
 
 # Type alias for message callback
@@ -557,3 +628,492 @@ class MarketWebSocket:
                 )
 
         self._last_sequence[asset_id] = sequence
+
+
+# User channel constants
+USER_CHANNEL_HEARTBEAT_INTERVAL = 10  # Polymarket requires PING every 10 seconds
+
+
+class UserChannelWebSocket:
+    """WebSocket client for Polymarket user channel (trade/order updates).
+
+    This class manages an authenticated WebSocket connection to the Polymarket
+    user channel for receiving real-time trade and order execution updates.
+    It handles authentication, message parsing, and automatic reconnection.
+
+    CRITICAL: The CLOB cancels all open orders when the user channel disconnects,
+    so robust reconnection logic is essential.
+
+    Example:
+        >>> config = Config.from_env()
+        >>> def on_message(msg_type: str, data: Any):
+        ...     print(f"Received {msg_type}: {data}")
+        >>> ws = UserChannelWebSocket(config, on_message=on_message)
+        >>> ws.connect()
+        >>> ws.run()  # Blocks until disconnected
+    """
+
+    def __init__(
+        self,
+        config: Config,
+        on_message: MessageCallback | None = None,
+        auto_reconnect: bool = True,
+    ) -> None:
+        """Initialize the user channel WebSocket client.
+
+        Args:
+            config: Application configuration containing credentials and endpoints.
+            on_message: Callback function called with (message_type, parsed_data).
+            auto_reconnect: Whether to automatically reconnect on disconnection.
+        """
+        self._config = config
+        self._url = config.ws_user_host
+        self._on_message_callback = on_message
+        self._auto_reconnect = auto_reconnect
+
+        # Connection state
+        self._ws: websocket.WebSocketApp | None = None
+        self._is_running = False
+        self._should_stop = False
+        self._reconnect_delay = DEFAULT_RECONNECT_DELAY
+        self._enabled = False
+
+        # Thread for running the WebSocket
+        self._ws_thread: threading.Thread | None = None
+
+        # Heartbeat tracking
+        self._last_ping_time: float = 0.0
+        self._last_pong_time: float = 0.0
+        self._heartbeat_thread: threading.Thread | None = None
+        self._heartbeat_stop_event = threading.Event()
+
+        # API credentials (derived during initialization)
+        self._api_key: str = ""
+        self._api_secret: str = ""
+        self._api_passphrase: str = ""
+
+        # Initialize if credentials are available
+        self._initialize()
+
+    def _initialize(self) -> None:
+        """Initialize API credentials for authentication.
+
+        Derives API credentials from the private key using the CLOB client.
+        If credentials cannot be derived, the WebSocket will be disabled.
+        """
+        if not self._config.private_key:
+            logger.warning(
+                "User channel WebSocket disabled: PRIVATE_KEY not set"
+            )
+            return
+
+        # For signature_type=1 (Magic wallet), funder_address is required
+        if self._config.signature_type == 1 and not self._config.funder_address:
+            logger.warning(
+                "User channel WebSocket disabled: SIGNATURE_TYPE=1 requires FUNDER_ADDRESS"
+            )
+            return
+
+        try:
+            self._derive_credentials()
+            self._enabled = True
+            logger.info("UserChannelWebSocket initialized for %s", self._url)
+        except Exception as e:
+            logger.error("Failed to initialize user channel: %s", e)
+            self._enabled = False
+
+    def _derive_credentials(self) -> None:
+        """Derive API credentials from private key.
+
+        Uses the CLOB client to derive or create API credentials
+        needed for WebSocket authentication.
+
+        Raises:
+            Exception: If credential derivation fails.
+        """
+        logger.debug(
+            "Deriving API credentials for user channel (signature_type=%d)",
+            self._config.signature_type,
+        )
+
+        # Build client kwargs following the pattern from TradeExecutor
+        client_kwargs = {
+            "host": self._config.clob_host,
+            "key": self._config.private_key,
+            "chain_id": POLYGON,
+            "signature_type": self._config.signature_type,
+        }
+
+        # Add funder parameter for Magic wallet (signature_type=1)
+        if self._config.signature_type == 1 and self._config.funder_address:
+            client_kwargs["funder"] = self._config.funder_address
+            logger.debug("Using funder address for Magic wallet")
+
+        client = ClobClient(**client_kwargs)
+
+        # Derive API credentials
+        api_creds = client.create_or_derive_api_creds()
+        client.set_api_creds(api_creds)
+
+        # Store credentials for WebSocket authentication
+        self._api_key = api_creds.api_key
+        self._api_secret = api_creds.api_secret
+        self._api_passphrase = api_creds.api_passphrase
+
+        logger.debug("API credentials derived successfully")
+
+    @property
+    def is_enabled(self) -> bool:
+        """Check if the user channel WebSocket is enabled."""
+        return self._enabled
+
+    @property
+    def is_connected(self) -> bool:
+        """Check if the WebSocket is currently connected."""
+        return self._ws is not None and self._is_running
+
+    def connect(self) -> None:
+        """Establish WebSocket connection.
+
+        Configures the WebSocket with proper handlers and prepares
+        for connection. Call run() to start the connection.
+        """
+        if not self._enabled:
+            logger.warning("User channel WebSocket not enabled - skipping connect")
+            return
+
+        self._should_stop = False
+        self._reconnect_delay = DEFAULT_RECONNECT_DELAY
+        self._heartbeat_stop_event.clear()
+
+        self._ws = websocket.WebSocketApp(
+            self._url,
+            on_open=self._on_open,
+            on_message=self._on_message,
+            on_error=self._on_error,
+            on_close=self._on_close,
+            on_ping=self._on_ping,
+            on_pong=self._on_pong,
+        )
+
+        logger.info("User channel WebSocket connection configured")
+
+    def run(self, blocking: bool = True) -> None:
+        """Run the WebSocket connection.
+
+        Args:
+            blocking: If True, blocks until disconnected. If False, runs in a thread.
+        """
+        if not self._enabled:
+            logger.warning("User channel WebSocket not enabled - skipping run")
+            return
+
+        if self._ws is None:
+            logger.error("WebSocket not connected. Call connect() first.")
+            return
+
+        if blocking:
+            self._run_forever()
+        else:
+            self._ws_thread = threading.Thread(target=self._run_forever, daemon=True)
+            self._ws_thread.start()
+            logger.debug("User channel WebSocket running in background thread")
+
+    def _run_forever(self) -> None:
+        """Internal method to run the WebSocket event loop with reconnection."""
+        while not self._should_stop:
+            try:
+                self._is_running = True
+                logger.info("Starting user channel WebSocket connection...")
+
+                # Run the WebSocket (blocks until disconnection)
+                # Note: We use a shorter ping_interval because user channel
+                # requires PING every 10 seconds
+                self._ws.run_forever(
+                    ping_interval=USER_CHANNEL_HEARTBEAT_INTERVAL * 3,  # 30 seconds
+                    ping_timeout=USER_CHANNEL_HEARTBEAT_INTERVAL,  # 10 seconds
+                )
+
+            except Exception as e:
+                logger.error("User channel WebSocket error: %s", e)
+
+            finally:
+                self._is_running = False
+                self._stop_heartbeat()
+
+            # Handle reconnection
+            if not self._should_stop and self._auto_reconnect:
+                logger.warning(
+                    "User channel disconnected - reconnecting in %.1f seconds "
+                    "(CRITICAL: CLOB may cancel open orders on disconnect)",
+                    self._reconnect_delay,
+                )
+                time.sleep(self._reconnect_delay)
+
+                # Exponential backoff
+                self._reconnect_delay = min(
+                    self._reconnect_delay * RECONNECT_BACKOFF_FACTOR,
+                    MAX_RECONNECT_DELAY,
+                )
+
+                # Recreate the WebSocket for reconnection
+                self.connect()
+            else:
+                break
+
+        logger.info("User channel WebSocket connection stopped")
+
+    def stop(self, timeout: float = 5.0) -> None:
+        """Stop the WebSocket connection and prevent reconnection.
+
+        Args:
+            timeout: Maximum time in seconds to wait for the WebSocket thread
+                to terminate. Default is 5 seconds.
+        """
+        self._should_stop = True
+        self._stop_heartbeat()
+
+        if self._ws:
+            self._ws.close()
+        logger.info("User channel WebSocket stop requested")
+
+        # Wait for the WebSocket thread to terminate
+        if self._ws_thread and self._ws_thread.is_alive():
+            logger.debug("Waiting for user channel WebSocket thread to terminate...")
+            self._ws_thread.join(timeout=timeout)
+            if self._ws_thread.is_alive():
+                logger.warning(
+                    "User channel WebSocket thread did not terminate within %.1f seconds",
+                    timeout,
+                )
+            else:
+                logger.debug("User channel WebSocket thread terminated successfully")
+        self._ws_thread = None
+
+    def _start_heartbeat(self) -> None:
+        """Start the heartbeat thread to send PING messages.
+
+        Polymarket requires PING every 10 seconds to keep the connection alive.
+        """
+        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+            return
+
+        self._heartbeat_stop_event.clear()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop, daemon=True
+        )
+        self._heartbeat_thread.start()
+        logger.debug("User channel heartbeat thread started")
+
+    def _stop_heartbeat(self) -> None:
+        """Stop the heartbeat thread."""
+        self._heartbeat_stop_event.set()
+        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+            self._heartbeat_thread.join(timeout=2.0)
+        self._heartbeat_thread = None
+
+    def _heartbeat_loop(self) -> None:
+        """Send periodic PING messages to keep the connection alive."""
+        while not self._heartbeat_stop_event.is_set():
+            if self.is_connected and self._ws:
+                try:
+                    # Send PING message as per Polymarket protocol
+                    self._ws.send("PING")
+                    self._last_ping_time = time.time()
+                    logger.debug("Sent heartbeat PING")
+                except Exception as e:
+                    logger.warning("Failed to send heartbeat: %s", e)
+
+            # Wait for next heartbeat interval
+            self._heartbeat_stop_event.wait(USER_CHANNEL_HEARTBEAT_INTERVAL)
+
+    def _on_open(self, ws: websocket.WebSocket) -> None:
+        """Handle WebSocket connection open event.
+
+        Sends authentication message immediately upon connection.
+        """
+        logger.info("User channel WebSocket connected to %s", self._url)
+        self._reconnect_delay = DEFAULT_RECONNECT_DELAY  # Reset on successful connect
+
+        # Send authentication message
+        self._authenticate()
+
+        # Start heartbeat thread
+        self._start_heartbeat()
+
+    def _authenticate(self) -> None:
+        """Send authentication message to the user channel.
+
+        The authentication message includes the API key, secret, and passphrase
+        derived from the wallet private key.
+        """
+        if not self._ws:
+            return
+
+        auth_msg = {
+            "auth": {
+                "apiKey": self._api_key,
+                "secret": self._api_secret,
+                "passphrase": self._api_passphrase,
+            },
+            "type": "subscribe",
+            "channel": "user",
+            "markets": [],  # Empty array subscribes to all markets for this user
+        }
+
+        try:
+            self._ws.send(json.dumps(auth_msg))
+            logger.info("User channel authentication message sent")
+        except Exception as e:
+            logger.error("Failed to send authentication message: %s", e)
+
+    def _on_message(self, ws: websocket.WebSocket, message: str) -> None:
+        """Handle incoming WebSocket messages."""
+        try:
+            # Handle PONG response (text-based)
+            if message == "PONG":
+                self._last_pong_time = time.time()
+                logger.debug("Received PONG response")
+                return
+
+            data = json.loads(message)
+            msg_type = self._get_message_type(data)
+
+            # Log at debug level to avoid spam
+            logger.debug("Received user channel %s message", msg_type)
+
+            # Parse and dispatch based on message type
+            parsed_data = self._parse_message(msg_type, data)
+
+            # Call user callback if provided
+            if self._on_message_callback and parsed_data is not None:
+                try:
+                    self._on_message_callback(msg_type, parsed_data)
+                except Exception as e:
+                    logger.error("Error in user channel message callback: %s", e)
+
+        except json.JSONDecodeError as e:
+            logger.warning("Failed to decode user channel message: %s", e)
+        except Exception as e:
+            logger.error("Error processing user channel message: %s", e)
+
+    def _on_error(self, ws: websocket.WebSocket, error: Exception) -> None:
+        """Handle WebSocket error event."""
+        logger.error("User channel WebSocket error: %s", error)
+
+    def _on_close(
+        self,
+        ws: websocket.WebSocket,
+        close_status_code: int | None,
+        close_msg: str | None,
+    ) -> None:
+        """Handle WebSocket close event."""
+        logger.warning(
+            "User channel WebSocket closed (code=%s, reason=%s) - "
+            "CRITICAL: CLOB may cancel open orders",
+            close_status_code,
+            close_msg,
+        )
+        self._is_running = False
+        self._stop_heartbeat()
+
+    def _on_ping(self, ws: websocket.WebSocket, message: bytes) -> None:
+        """Handle ping message from server."""
+        self._last_ping_time = time.time()
+        logger.debug("Received user channel ping")
+
+    def _on_pong(self, ws: websocket.WebSocket, message: bytes) -> None:
+        """Handle pong response from server."""
+        self._last_pong_time = time.time()
+        logger.debug("Received user channel pong")
+
+    def _get_message_type(self, data: dict[str, Any]) -> str:
+        """Extract the message type from a WebSocket message.
+
+        Args:
+            data: Parsed JSON message data.
+
+        Returns:
+            Message type string (e.g., "trade", "order", "subscribed").
+        """
+        # User channel messages typically use "type" or "event_type"
+        if "event_type" in data:
+            return str(data["event_type"])
+        if "type" in data:
+            return str(data["type"])
+        return "unknown"
+
+    def _parse_message(
+        self,
+        msg_type: str,
+        data: dict[str, Any],
+    ) -> TradeMessage | OrderMessage | dict[str, Any] | None:
+        """Parse a WebSocket message into a structured object.
+
+        Args:
+            msg_type: The message type identifier.
+            data: Raw message data.
+
+        Returns:
+            Parsed message object or None if parsing fails.
+        """
+        try:
+            if msg_type == "trade":
+                return self._parse_trade_message(data)
+            elif msg_type == "order":
+                return self._parse_order_message(data)
+            else:
+                # Return raw data for other message types (e.g., "subscribed")
+                return data
+
+        except Exception as e:
+            logger.warning("Failed to parse user channel %s message: %s", msg_type, e)
+            return None
+
+    def _parse_trade_message(self, data: dict[str, Any]) -> TradeMessage:
+        """Parse a trade execution message.
+
+        Args:
+            data: Raw trade message data.
+
+        Returns:
+            Parsed TradeMessage object.
+        """
+        return TradeMessage(
+            trade_id=str(data.get("trade_id", data.get("id", ""))),
+            order_id=str(data.get("order_id", data.get("maker_order_id", ""))),
+            asset_id=str(data.get("asset_id", data.get("token_id", ""))),
+            market_id=str(data.get("market", data.get("condition_id", ""))),
+            side=str(data.get("side", "")).upper(),
+            price=float(data.get("price", 0)),
+            size=float(data.get("size", data.get("match_amount", 0))),
+            timestamp=int(data.get("timestamp", data.get("created_at", 0))),
+            fee=float(data.get("fee", data.get("fee_rate_bps", 0))),
+            maker_address=str(data.get("maker_address", "")),
+            taker_order_id=str(data.get("taker_order_id", "")),
+            status=str(data.get("status", "")),
+        )
+
+    def _parse_order_message(self, data: dict[str, Any]) -> OrderMessage:
+        """Parse an order status update message.
+
+        Args:
+            data: Raw order message data.
+
+        Returns:
+            Parsed OrderMessage object.
+        """
+        return OrderMessage(
+            order_id=str(data.get("order_id", data.get("id", ""))),
+            asset_id=str(data.get("asset_id", data.get("token_id", ""))),
+            market_id=str(data.get("market", data.get("condition_id", ""))),
+            side=str(data.get("side", "")).upper(),
+            price=float(data.get("price", 0)),
+            original_size=float(data.get("original_size", data.get("size", 0))),
+            size_matched=float(data.get("size_matched", data.get("matched", 0))),
+            status=str(data.get("status", "")),
+            timestamp=int(data.get("timestamp", data.get("created_at", 0))),
+            expiration=int(data.get("expiration", 0)),
+            order_type=str(data.get("order_type", data.get("type", ""))),
+            owner=str(data.get("owner", data.get("maker_address", ""))),
+        )
