@@ -12,7 +12,6 @@ from typing import Optional
 from uuid import UUID
 
 import psycopg
-from psycopg import Connection
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 

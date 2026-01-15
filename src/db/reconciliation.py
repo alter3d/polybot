@@ -5,7 +5,7 @@ trade state with the Polymarket CLOB API on application startup.
 """
 
 import logging
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 from py_clob_client.client import ClobClient
@@ -309,7 +309,7 @@ class TradeReconciler:
         if avg_price_str:
             try:
                 avg_fill_price = Decimal(str(avg_price_str))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, InvalidOperation):
                 pass
 
         # Update the trade in database
