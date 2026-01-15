@@ -58,6 +58,7 @@ from src.market.timing import (
     get_current_market_window,
     time_until_window_ends,
 )
+from src.db.repository import TradeRepository
 from src.notifications.console import ConsoleNotifier
 from src.trading.executor import TradeExecutor
 
@@ -100,6 +101,9 @@ class PolymarketMonitor:
         self._websocket: MarketWebSocket | None = None
         self._user_websocket: UserChannelWebSocket | None = None
         self._notifier = ConsoleNotifier()
+        # TradeRepository is initialized later in run() after logging is configured
+        # This ensures database connection logs are captured
+        self._repository: TradeRepository | None = None
         # TradeExecutor is initialized later in run() after logging is configured
         # This ensures all initialization logs are captured
         self._trade_executor: TradeExecutor | None = None
@@ -888,6 +892,10 @@ class PolymarketMonitor:
         # This ensures all initialization logs (including any errors) are captured
         self._trade_executor = TradeExecutor(self._config)
 
+        # Initialize TradeRepository for database persistence
+        # Gracefully disables if DATABASE_URL not configured
+        self._repository = TradeRepository(self._config.database_url)
+
         # Initialize user channel WebSocket for trade/order updates
         # This runs in background thread and auto-reconnects on disconnect
         # Gracefully skips if PRIVATE_KEY not set (UserChannelWebSocket handles this)
@@ -926,7 +934,8 @@ class PolymarketMonitor:
     def stop(self) -> None:
         """Stop the monitor and clean up resources.
 
-        Cleanly shuts down market WebSocket, user_channel WebSocket, and API clients.
+        Cleanly shuts down market WebSocket, user_channel WebSocket, database
+        connection pool, and API clients.
         """
         if not self._running:
             return
@@ -949,6 +958,11 @@ class PolymarketMonitor:
         if self._gamma_client:
             self._gamma_client.close()
             self._gamma_client = None
+
+        # Close database connection pool
+        if self._repository:
+            self._repository.close()
+            self._repository = None
 
         logger.info("Cleanup complete")
 
