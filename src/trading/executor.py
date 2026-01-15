@@ -13,6 +13,7 @@ from py_clob_client.clob_types import OrderArgs, OrderType, PartialCreateOrderOp
 from py_clob_client.constants import POLYGON
 
 from src.config import Config
+from src.db.repository import TradeRepository
 from src.market.opportunity_detector import Opportunity
 from src.notifications.console import BaseNotifier
 
@@ -88,9 +89,12 @@ class TradeExecutor(BaseNotifier):
         _config: Application configuration with trading parameters.
         _enabled: Whether trading is enabled (requires auto_trade_enabled and private_key).
         _client: Authenticated CLOB client for order submission.
+        _repository: Optional trade repository for database persistence.
     """
 
-    def __init__(self, config: Config) -> None:
+    def __init__(
+        self, config: Config, repository: Optional[TradeRepository] = None
+    ) -> None:
         """Initialize the trade executor.
 
         Sets up authenticated CLOB client if trading is enabled and
@@ -99,8 +103,10 @@ class TradeExecutor(BaseNotifier):
 
         Args:
             config: Application configuration with trading parameters.
+            repository: Optional trade repository for database persistence.
         """
         self._config = config
+        self._repository = repository
         self._enabled = False
         self._client: Optional[ClobClient] = None
 
