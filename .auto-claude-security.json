@@ -128,10 +128,25 @@
     "zsh"
   ],
   "stack_commands": [
+    "ar",
+    "clang",
+    "clang++",
+    "cmake",
+    "g++",
+    "gcc",
     "ipython",
     "jupyter",
+    "ld",
+    "make",
+    "meson",
     "mypy",
+    "ninja",
+    "nm",
+    "node",
     "notebook",
+    "npm",
+    "npx",
+    "objdump",
     "pdb",
     "pip",
     "pip3",
@@ -141,13 +156,16 @@
     "pytest",
     "python",
     "python3",
-    "ruff"
+    "ruff",
+    "strip"
   ],
   "script_commands": [],
   "custom_commands": [],
   "detected_stack": {
     "languages": [
-      "python"
+      "python",
+      "javascript",
+      "c"
     ],
     "package_managers": [
       "pip"
@@ -170,7 +188,8 @@
     "cargo_aliases": [],
     "shell_scripts": []
   },
-  "project_dir": "/home/alter3d/git/polybot/.auto-claude/worktrees/tasks/007-create-a-postgres-database-schema-to-track-open-an",
-  "created_at": "2026-01-14T02:01:10.316672",
-  "project_hash": "e9cd2dc6cb7757e77e65246b50244921"
+  "project_dir": "/home/alter3d/git/polybot",
+  "created_at": "2026-01-15T02:44:58.590184",
+  "project_hash": "badcd5ba7cafd5ee03a4cc9853a684d3",
+  "inherited_from": "/home/alter3d/git/polybot"
 }
