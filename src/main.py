@@ -58,6 +58,7 @@ from src.market.timing import (
     get_current_market_window,
     time_until_window_ends,
 )
+from src.db.reconciliation import TradeReconciler
 from src.db.repository import TradeRepository
 from src.notifications.console import ConsoleNotifier
 from src.trading.executor import TradeExecutor
@@ -895,6 +896,15 @@ class PolymarketMonitor:
         # Initialize TradeRepository for database persistence
         # Gracefully disables if DATABASE_URL not configured
         self._repository = TradeRepository(self._config.database_url)
+
+        # Run trade reconciliation BEFORE websocket connections
+        # This syncs database state with CLOB API for any missed updates while offline
+        reconciler = TradeReconciler(self._config, self._repository)
+        if reconciler.is_enabled:
+            updated_count = reconciler.reconcile()
+            logger.info("Trade reconciliation complete: %d trades updated", updated_count)
+        else:
+            logger.debug("Trade reconciliation skipped (not configured)")
 
         # Initialize user channel WebSocket for trade/order updates
         # This runs in background thread and auto-reconnects on disconnect
