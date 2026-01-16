@@ -213,15 +213,21 @@ class TradeExecutor(BaseNotifier):
     def _calculate_shares(self, amount_usd: float) -> float:
         """Calculate the number of shares for a given dollar amount.
 
-        Shares are calculated based on the configured limit price.
+        Shares are calculated based on the configured limit price and rounded
+        to 2 decimal places to match exchange precision. The Polymarket CLOB
+        rounds share quantities, so we round before submission to ensure
+        consistency between our stored quantity and the exchange's fill amounts.
 
         Args:
             amount_usd: Dollar amount to invest.
 
         Returns:
-            Number of shares to purchase (e.g., $20 / $0.90 = 22.22 shares).
+            Number of shares to purchase, rounded to 2 decimals
+            (e.g., $5 / $0.99 = 5.05 shares, not 5.050505...).
         """
-        return amount_usd / self._config.limit_price
+        shares = amount_usd / self._config.limit_price
+        # Round to 2 decimal places to match exchange precision
+        return round(shares, 2)
 
     def _categorize_error(self, error: Exception) -> TradeExecutionError:
         """Categorize an exception into a specific TradeExecutionError type.

@@ -221,18 +221,39 @@ class TestTradeExecutorShareCalculation:
         assert abs(shares - 111.11) < 0.01
 
     def test_calculate_shares_uses_config_limit_price(self):
-        """Verify share calculation uses config.limit_price."""
+        """Verify share calculation uses config.limit_price and rounds to 2 decimals."""
         config = Config(auto_trade_enabled=False, limit_price=0.85)
         executor = TradeExecutor(config)
         amount = 50.0
         shares = executor._calculate_shares(amount)
-        expected = amount / config.limit_price
+        # Expected is rounded to 2 decimals to match exchange precision
+        expected = round(amount / config.limit_price, 2)
         assert shares == expected
 
     def test_default_limit_price_is_ninety_cents(self):
         """Verify default config.limit_price is $0.90."""
         config = Config(auto_trade_enabled=False)
         assert config.limit_price == 0.90
+
+    def test_calculate_shares_rounds_to_two_decimal_places(self):
+        """Verify shares are rounded to 2 decimals to match exchange precision.
+
+        This is critical for correct fill detection. The exchange rounds share
+        quantities, so if we store unrounded values, fills will appear partial
+        when they're actually complete.
+
+        Example: $5 at $0.99 = 5.050505... raw, but exchange fills 5.05.
+        Without rounding, filled_quantity(5.05) < quantity(5.050505) = partial.
+        """
+        config = Config(auto_trade_enabled=False, limit_price=0.99)
+        executor = TradeExecutor(config)
+
+        # This is the exact case from QA: $5 / $0.99 = 5.050505050505...
+        shares = executor._calculate_shares(5.0)
+        assert shares == 5.05  # Must be exactly 5.05, not 5.050505...
+
+        # Verify no extra precision by checking string representation
+        assert str(shares) == "5.05"
 
 
 class TestTradeExecutorNotify:
