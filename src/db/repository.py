@@ -8,6 +8,7 @@ import logging
 from contextlib import contextmanager
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
@@ -20,9 +21,18 @@ from src.db.models import Market, Trade, Wallet
 
 logger = logging.getLogger(__name__)
 
+# Path to the migrations directory
+MIGRATIONS_DIR = Path(__file__).parent.parent.parent / "db" / "migrations"
+
 
 class DatabaseConnectionError(Exception):
     """Raised when database connection fails."""
+
+    pass
+
+
+class DatabaseSchemaError(Exception):
+    """Raised when database schema is missing or invalid."""
 
     pass
 
@@ -43,12 +53,19 @@ class TradeRepository:
         """Initialize the trade repository with database connection.
 
         Creates a connection pool for efficient database access.
-        Gracefully disables database operations if connection fails.
+        Gracefully disables database operations if DATABASE_URL is not configured.
+        If DATABASE_URL is configured, verifies schema exists and runs migrations
+        if needed. Raises an error if database cannot be properly initialized.
 
         Args:
             database_url: PostgreSQL connection string.
+
+        Raises:
+            DatabaseConnectionError: If DATABASE_URL is set but connection fails.
+            DatabaseSchemaError: If DATABASE_URL is set but schema cannot be initialized.
         """
         self._enabled = False
+        self._configured = bool(database_url)
         self._pool: Optional[ConnectionPool] = None
 
         if not database_url:
@@ -57,11 +74,27 @@ class TradeRepository:
 
         try:
             self._initialize_pool(database_url)
-            self._enabled = True
-            logger.info("TradeRepository initialized with connection pool")
         except Exception as e:
             logger.error("Failed to initialize database connection: %s", e)
-            self._enabled = False
+            raise DatabaseConnectionError(f"Database connection failed: {e}") from e
+
+        # Verify schema exists and run migrations if needed
+        try:
+            if not self._verify_schema():
+                logger.info("Database schema not found, running migrations...")
+                self._run_migrations()
+                if not self._verify_schema():
+                    raise DatabaseSchemaError(
+                        "Database schema is still missing after running migrations"
+                    )
+            self._enabled = True
+            logger.info("TradeRepository initialized with connection pool")
+        except (DatabaseSchemaError, psycopg.Error) as e:
+            logger.error("Failed to initialize database schema: %s", e)
+            if self._pool:
+                self._pool.close()
+                self._pool = None
+            raise DatabaseSchemaError(f"Database schema initialization failed: {e}") from e
 
     def _initialize_pool(self, database_url: str) -> None:
         """Initialize the connection pool.
@@ -91,10 +124,80 @@ class TradeRepository:
         except psycopg.Error as e:
             raise DatabaseConnectionError(f"Failed to create connection pool: {e}")
 
+    def _verify_schema(self) -> bool:
+        """Verify that the required database schema exists.
+
+        Checks for the existence of required tables: wallets, markets, trades.
+
+        Returns:
+            True if all required tables exist, False otherwise.
+        """
+        required_tables = ["wallets", "markets", "trades"]
+
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT table_name
+                        FROM information_schema.tables
+                        WHERE table_schema = 'public'
+                          AND table_name = ANY($1)
+                        """,
+                        (required_tables,),
+                    )
+                    existing_tables = {row["table_name"] for row in cur.fetchall()}
+
+            missing = set(required_tables) - existing_tables
+            if missing:
+                logger.warning("Missing database tables: %s", ", ".join(sorted(missing)))
+                return False
+
+            logger.debug("Database schema verified: all required tables exist")
+            return True
+
+        except psycopg.Error as e:
+            logger.error("Failed to verify database schema: %s", e)
+            return False
+
+    def _run_migrations(self) -> None:
+        """Run database migrations to create/update schema.
+
+        Executes the migration SQL file(s) to set up the database schema.
+        The migrations are idempotent and can be run multiple times safely.
+
+        Raises:
+            DatabaseSchemaError: If migrations fail to execute.
+        """
+        migration_file = MIGRATIONS_DIR / "001_initial_schema.sql"
+
+        if not migration_file.exists():
+            raise DatabaseSchemaError(
+                f"Migration file not found: {migration_file}"
+            )
+
+        logger.info("Running database migrations from: %s", migration_file)
+
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cur:
+                    migration_sql = migration_file.read_text()
+                    cur.execute(migration_sql)
+                conn.commit()
+            logger.info("Database migrations completed successfully")
+
+        except psycopg.Error as e:
+            raise DatabaseSchemaError(f"Failed to run migrations: {e}") from e
+
     @property
     def is_enabled(self) -> bool:
         """Check if database operations are enabled."""
         return self._enabled
+
+    @property
+    def is_configured(self) -> bool:
+        """Check if a database URL was provided (even if connection failed)."""
+        return self._configured
 
     @contextmanager
     def _get_connection(self):
@@ -600,4 +703,4 @@ class TradeRepository:
         )
 
 
-__all__ = ["TradeRepository", "DatabaseConnectionError"]
+__all__ = ["TradeRepository", "DatabaseConnectionError", "DatabaseSchemaError"]

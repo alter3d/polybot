@@ -59,7 +59,11 @@ from src.market.timing import (
     time_until_window_ends,
 )
 from src.db.reconciliation import TradeReconciler
-from src.db.repository import TradeRepository
+from src.db.repository import (
+    DatabaseConnectionError,
+    DatabaseSchemaError,
+    TradeRepository,
+)
 from src.db.trade_callbacks import TradeTrackingCallback
 from src.notifications.console import ConsoleNotifier
 from src.trading.executor import TradeExecutor
@@ -900,8 +904,24 @@ class PolymarketMonitor:
         self._setup_logging()
 
         # Initialize TradeRepository for database persistence
-        # Gracefully disables if DATABASE_URL not configured
-        self._repository = TradeRepository(self._config.database_url)
+        # - If DATABASE_URL is not configured, gracefully disables persistence
+        # - If DATABASE_URL is configured, verifies schema and runs migrations
+        # - If database is configured but fails to initialize, abort safely
+        try:
+            self._repository = TradeRepository(self._config.database_url)
+        except (DatabaseConnectionError, DatabaseSchemaError) as e:
+            logger.error(
+                "CRITICAL: Database is configured but failed to initialize: %s", e
+            )
+            logger.error(
+                "Database is a critical component. Please fix the database connection "
+                "or remove DATABASE_URL to disable trade tracking."
+            )
+            print("\n" + "=" * 60)
+            print("ERROR: Database initialization failed")
+            print(f"  {e}")
+            print("=" * 60 + "\n")
+            return
 
         # Initialize TradeTrackingCallback for WebSocket trade/order updates
         # This processes OrderMessage and TradeMessage events to update database

@@ -13,7 +13,11 @@ import pytest
 
 from src.db import OrderSide, TradeSide, TradeStatus
 from src.db.models import Market, Trade, Wallet
-from src.db.repository import DatabaseConnectionError, TradeRepository
+from src.db.repository import (
+    DatabaseConnectionError,
+    DatabaseSchemaError,
+    TradeRepository,
+)
 
 
 class TestTradeRepositoryInit:
@@ -23,15 +27,18 @@ class TestTradeRepositoryInit:
         """Verify repository is disabled when database URL is empty."""
         repo = TradeRepository("")
         assert repo.is_enabled is False
+        assert repo.is_configured is False
 
     def test_init_disabled_when_none_database_url(self):
         """Verify repository handles None-like empty string gracefully."""
         repo = TradeRepository("")
         assert repo.is_enabled is False
         assert repo._pool is None
+        assert repo.is_configured is False
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_init_enabled_with_valid_database_url(self, mock_pool_class):
+    def test_init_enabled_with_valid_database_url(self, mock_pool_class, mock_verify):
         """Verify repository is enabled with valid database URL."""
         mock_pool = MagicMock()
         mock_conn = MagicMock()
@@ -42,9 +49,11 @@ class TestTradeRepositoryInit:
         repo = TradeRepository("postgresql://user:pass@localhost/db")
         assert repo.is_enabled is True
         assert repo._pool is not None
+        assert repo.is_configured is True
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_init_creates_connection_pool(self, mock_pool_class):
+    def test_init_creates_connection_pool(self, mock_pool_class, mock_verify):
         """Verify connection pool is created with correct parameters."""
         mock_pool = MagicMock()
         mock_conn = MagicMock()
@@ -61,8 +70,9 @@ class TestTradeRepositoryInit:
         assert call_args[1]["max_size"] == 5
         assert call_args[1]["timeout"] == 10.0
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_init_tests_connection(self, mock_pool_class):
+    def test_init_tests_connection(self, mock_pool_class, mock_verify):
         """Verify pool tests connection on initialization."""
         mock_pool = MagicMock()
         mock_conn = MagicMock()
@@ -75,31 +85,71 @@ class TestTradeRepositoryInit:
         # Verify SELECT 1 was executed to test connection
         mock_conn.execute.assert_called_once_with("SELECT 1")
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_init_disabled_on_connection_error(self, mock_pool_class):
-        """Verify repository is disabled when connection fails."""
+    def test_init_raises_on_connection_error(self, mock_pool_class, mock_verify):
+        """Verify repository raises when connection fails (database configured)."""
         mock_pool_class.side_effect = Exception("Connection refused")
 
-        repo = TradeRepository("postgresql://invalid:url@localhost/db")
-        assert repo.is_enabled is False
-        assert repo._pool is None
+        with pytest.raises(DatabaseConnectionError):
+            TradeRepository("postgresql://invalid:url@localhost/db")
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_init_disabled_on_pool_test_error(self, mock_pool_class):
-        """Verify repository is disabled when connection test fails."""
+    def test_init_raises_on_pool_test_error(self, mock_pool_class, mock_verify):
+        """Verify repository raises when connection test fails (database configured)."""
         mock_pool = MagicMock()
         mock_pool.connection.side_effect = Exception("Test query failed")
         mock_pool_class.return_value = mock_pool
 
+        with pytest.raises(DatabaseConnectionError):
+            TradeRepository("postgresql://user:pass@localhost/db")
+
+    @patch.object(TradeRepository, "_run_migrations")
+    @patch.object(TradeRepository, "_verify_schema", side_effect=[False, False])
+    @patch("src.db.repository.ConnectionPool")
+    def test_init_raises_on_schema_missing_after_migration(
+        self, mock_pool_class, mock_verify, mock_migrate
+    ):
+        """Verify repository raises when schema is still missing after migration."""
+        mock_pool = MagicMock()
+        mock_conn = MagicMock()
+        mock_pool.connection.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_pool.connection.return_value.__exit__ = MagicMock(return_value=False)
+        mock_pool_class.return_value = mock_pool
+
+        with pytest.raises(DatabaseSchemaError):
+            TradeRepository("postgresql://user:pass@localhost/db")
+
+        # Verify migration was attempted
+        mock_migrate.assert_called_once()
+
+    @patch.object(TradeRepository, "_run_migrations")
+    @patch.object(TradeRepository, "_verify_schema", side_effect=[False, True])
+    @patch("src.db.repository.ConnectionPool")
+    def test_init_runs_migrations_when_schema_missing(
+        self, mock_pool_class, mock_verify, mock_migrate
+    ):
+        """Verify repository runs migrations when schema is missing."""
+        mock_pool = MagicMock()
+        mock_conn = MagicMock()
+        mock_pool.connection.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_pool.connection.return_value.__exit__ = MagicMock(return_value=False)
+        mock_pool_class.return_value = mock_pool
+
         repo = TradeRepository("postgresql://user:pass@localhost/db")
-        assert repo.is_enabled is False
+
+        # Verify migration was run
+        mock_migrate.assert_called_once()
+        assert repo.is_enabled is True
 
 
 class TestTradeRepositoryClose:
     """Test TradeRepository close method."""
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_close_closes_pool(self, mock_pool_class):
+    def test_close_closes_pool(self, mock_pool_class, mock_verify):
         """Verify close() closes the connection pool."""
         mock_pool = MagicMock()
         mock_conn = MagicMock()
@@ -112,8 +162,9 @@ class TestTradeRepositoryClose:
 
         mock_pool.close.assert_called_once()
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_close_sets_disabled(self, mock_pool_class):
+    def test_close_sets_disabled(self, mock_pool_class, mock_verify):
         """Verify close() sets is_enabled to False."""
         mock_pool = MagicMock()
         mock_conn = MagicMock()
@@ -144,8 +195,9 @@ class TestTradeRepositoryWalletOperations:
         result = repo.get_or_create_wallet("0x1234567890123456789012345678901234567890")
         assert result is None
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_or_create_wallet_success(self, mock_pool_class):
+    def test_get_or_create_wallet_success(self, mock_pool_class, mock_verify):
         """Verify get_or_create_wallet creates and returns wallet."""
         wallet_id = uuid4()
         now = datetime.now()
@@ -184,8 +236,9 @@ class TestTradeRepositoryWalletOperations:
         assert result.name == "Test Wallet"
         assert result.signature_type == 1
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_or_create_wallet_commits_transaction(self, mock_pool_class):
+    def test_get_or_create_wallet_commits_transaction(self, mock_pool_class, mock_verify):
         """Verify get_or_create_wallet commits the transaction."""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = {
@@ -211,8 +264,9 @@ class TestTradeRepositoryWalletOperations:
 
         mock_conn.commit.assert_called_once()
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_or_create_wallet_returns_none_on_error(self, mock_pool_class):
+    def test_get_or_create_wallet_returns_none_on_error(self, mock_pool_class, mock_verify):
         """Verify get_or_create_wallet returns None on database error."""
         import psycopg
 
@@ -238,8 +292,9 @@ class TestTradeRepositoryWalletOperations:
         result = repo.get_wallet_by_address("0x1234567890123456789012345678901234567890")
         assert result is None
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_wallet_by_address_found(self, mock_pool_class):
+    def test_get_wallet_by_address_found(self, mock_pool_class, mock_verify):
         """Verify get_wallet_by_address returns wallet when found."""
         wallet_id = uuid4()
         now = datetime.now()
@@ -272,8 +327,9 @@ class TestTradeRepositoryWalletOperations:
         assert result.id == wallet_id
         assert result.address == "0xabcdef1234567890abcdef1234567890abcdef12"
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_wallet_by_address_not_found(self, mock_pool_class):
+    def test_get_wallet_by_address_not_found(self, mock_pool_class, mock_verify):
         """Verify get_wallet_by_address returns None when not found."""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
@@ -301,8 +357,9 @@ class TestTradeRepositoryMarketOperations:
         result = repo.get_or_create_market("condition-abc-123")
         assert result is None
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_or_create_market_success(self, mock_pool_class):
+    def test_get_or_create_market_success(self, mock_pool_class, mock_verify):
         """Verify get_or_create_market creates and returns market."""
         market_id = uuid4()
         now = datetime.now()
@@ -345,8 +402,9 @@ class TestTradeRepositoryMarketOperations:
         assert result.end_date == end_date
         assert result.resolved is False
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_or_create_market_commits_transaction(self, mock_pool_class):
+    def test_get_or_create_market_commits_transaction(self, mock_pool_class, mock_verify):
         """Verify get_or_create_market commits the transaction."""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = {
@@ -374,8 +432,9 @@ class TestTradeRepositoryMarketOperations:
 
         mock_conn.commit.assert_called_once()
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_or_create_market_returns_none_on_error(self, mock_pool_class):
+    def test_get_or_create_market_returns_none_on_error(self, mock_pool_class, mock_verify):
         """Verify get_or_create_market returns None on database error."""
         import psycopg
 
@@ -401,8 +460,9 @@ class TestTradeRepositoryMarketOperations:
         result = repo.get_market_by_condition_id("condition-abc-123")
         assert result is None
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_market_by_condition_id_found(self, mock_pool_class):
+    def test_get_market_by_condition_id_found(self, mock_pool_class, mock_verify):
         """Verify get_market_by_condition_id returns market when found."""
         market_id = uuid4()
         now = datetime.now()
@@ -438,8 +498,9 @@ class TestTradeRepositoryMarketOperations:
         assert result.resolved is True
         assert result.winning_side == "YES"
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_market_by_condition_id_not_found(self, mock_pool_class):
+    def test_get_market_by_condition_id_not_found(self, mock_pool_class, mock_verify):
         """Verify get_market_by_condition_id returns None when not found."""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
@@ -476,8 +537,9 @@ class TestTradeRepositoryTradeOperations:
         result = repo.create_trade(trade)
         assert result is None
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_create_trade_success(self, mock_pool_class):
+    def test_create_trade_success(self, mock_pool_class, mock_verify):
         """Verify create_trade creates and returns trade with database ID."""
         trade_id = uuid4()
         wallet_id = uuid4()
@@ -538,8 +600,9 @@ class TestTradeRepositoryTradeOperations:
         assert result.market_id == market_id
         assert result.status == TradeStatus.OPEN
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_create_trade_commits_transaction(self, mock_pool_class):
+    def test_create_trade_commits_transaction(self, mock_pool_class, mock_verify):
         """Verify create_trade commits the transaction."""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = {
@@ -588,8 +651,9 @@ class TestTradeRepositoryTradeOperations:
 
         mock_conn.commit.assert_called_once()
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_create_trade_returns_none_on_error(self, mock_pool_class):
+    def test_create_trade_returns_none_on_error(self, mock_pool_class, mock_verify):
         """Verify create_trade returns None on database error."""
         import psycopg
 
@@ -628,8 +692,9 @@ class TestTradeRepositoryUpdateTrade:
         result = repo.update_trade(uuid4(), status=TradeStatus.FILLED)
         assert result is None
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_update_trade_status_success(self, mock_pool_class):
+    def test_update_trade_status_success(self, mock_pool_class, mock_verify):
         """Verify update_trade updates status successfully."""
         trade_id = uuid4()
         now = datetime.now()
@@ -681,8 +746,9 @@ class TestTradeRepositoryUpdateTrade:
         assert result.status == TradeStatus.FILLED
         assert result.filled_quantity == Decimal("100")
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_update_trade_partial_fill(self, mock_pool_class):
+    def test_update_trade_partial_fill(self, mock_pool_class, mock_verify):
         """Verify update_trade can update for partial fill."""
         trade_id = uuid4()
         now = datetime.now()
@@ -734,8 +800,9 @@ class TestTradeRepositoryUpdateTrade:
         assert result.filled_quantity == Decimal("50")
         assert result.neg_risk is True
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_update_trade_commits_transaction(self, mock_pool_class):
+    def test_update_trade_commits_transaction(self, mock_pool_class, mock_verify):
         """Verify update_trade commits the transaction."""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = {
@@ -775,8 +842,9 @@ class TestTradeRepositoryUpdateTrade:
 
         mock_conn.commit.assert_called_once()
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_update_trade_not_found(self, mock_pool_class):
+    def test_update_trade_not_found(self, mock_pool_class, mock_verify):
         """Verify update_trade returns None when trade not found."""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
@@ -804,8 +872,9 @@ class TestTradeRepositoryGetTradeByOrderId:
         result = repo.get_trade_by_order_id("clob-order-123")
         assert result is None
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_trade_by_order_id_found(self, mock_pool_class):
+    def test_get_trade_by_order_id_found(self, mock_pool_class, mock_verify):
         """Verify get_trade_by_order_id returns trade when found."""
         trade_id = uuid4()
         wallet_id = uuid4()
@@ -855,8 +924,9 @@ class TestTradeRepositoryGetTradeByOrderId:
         assert result.order_id == "clob-order-xyz"
         assert result.status == TradeStatus.FILLED
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_trade_by_order_id_not_found(self, mock_pool_class):
+    def test_get_trade_by_order_id_not_found(self, mock_pool_class, mock_verify):
         """Verify get_trade_by_order_id returns None when not found."""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
@@ -874,8 +944,9 @@ class TestTradeRepositoryGetTradeByOrderId:
 
         assert result is None
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_trade_by_order_id_returns_none_on_error(self, mock_pool_class):
+    def test_get_trade_by_order_id_returns_none_on_error(self, mock_pool_class, mock_verify):
         """Verify get_trade_by_order_id returns None on database error."""
         import psycopg
 
@@ -905,8 +976,9 @@ class TestTradeRepositoryGetOpenTrades:
         result = repo.get_open_trades()
         assert result == []
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_open_trades_returns_open_and_partial(self, mock_pool_class):
+    def test_get_open_trades_returns_open_and_partial(self, mock_pool_class, mock_verify):
         """Verify get_open_trades returns trades with open or partially_filled status."""
         now = datetime.now()
         mock_rows = [
@@ -977,8 +1049,9 @@ class TestTradeRepositoryGetOpenTrades:
         assert result[0].status == TradeStatus.OPEN
         assert result[1].status == TradeStatus.PARTIALLY_FILLED
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_open_trades_filtered_by_wallet(self, mock_pool_class):
+    def test_get_open_trades_filtered_by_wallet(self, mock_pool_class, mock_verify):
         """Verify get_open_trades can filter by wallet_id."""
         wallet_id = uuid4()
         now = datetime.now()
@@ -1030,8 +1103,9 @@ class TestTradeRepositoryGetOpenTrades:
         call_args = mock_cursor.execute.call_args
         assert "wallet_id = $1" in call_args[0][0]
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_open_trades_empty_result(self, mock_pool_class):
+    def test_get_open_trades_empty_result(self, mock_pool_class, mock_verify):
         """Verify get_open_trades returns empty list when no open trades."""
         mock_cursor = MagicMock()
         mock_cursor.fetchall.return_value = []
@@ -1049,8 +1123,9 @@ class TestTradeRepositoryGetOpenTrades:
 
         assert result == []
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_open_trades_returns_empty_on_error(self, mock_pool_class):
+    def test_get_open_trades_returns_empty_on_error(self, mock_pool_class, mock_verify):
         """Verify get_open_trades returns empty list on database error."""
         import psycopg
 
@@ -1101,8 +1176,9 @@ class TestTradeRepositoryConnectionContext:
                 pass
         assert "not initialized" in str(exc_info.value)
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_get_connection_yields_connection(self, mock_pool_class):
+    def test_get_connection_yields_connection(self, mock_pool_class, mock_verify):
         """Verify _get_connection yields connection from pool."""
         mock_conn = MagicMock()
         mock_pool = MagicMock()
@@ -1119,8 +1195,9 @@ class TestTradeRepositoryConnectionContext:
 class TestTradeRepositoryRowConversion:
     """Test row-to-dataclass conversion methods."""
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_row_to_wallet_converts_all_fields(self, mock_pool_class):
+    def test_row_to_wallet_converts_all_fields(self, mock_pool_class, mock_verify):
         """Verify _row_to_wallet converts all fields correctly."""
         mock_pool = MagicMock()
         mock_conn = MagicMock()
@@ -1152,8 +1229,9 @@ class TestTradeRepositoryRowConversion:
         assert wallet.created_at == now
         assert wallet.updated_at == now
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_row_to_market_converts_all_fields(self, mock_pool_class):
+    def test_row_to_market_converts_all_fields(self, mock_pool_class, mock_verify):
         """Verify _row_to_market converts all fields correctly."""
         mock_pool = MagicMock()
         mock_conn = MagicMock()
@@ -1188,8 +1266,9 @@ class TestTradeRepositoryRowConversion:
         assert market.winning_side == "NO"
         assert market.resolution_price == Decimal("0")
 
+    @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
-    def test_row_to_trade_converts_all_fields(self, mock_pool_class):
+    def test_row_to_trade_converts_all_fields(self, mock_pool_class, mock_verify):
         """Verify _row_to_trade converts all fields correctly."""
         mock_pool = MagicMock()
         mock_conn = MagicMock()
