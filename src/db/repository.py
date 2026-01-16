@@ -142,7 +142,7 @@ class TradeRepository:
                         SELECT table_name
                         FROM information_schema.tables
                         WHERE table_schema = 'public'
-                          AND table_name = ANY($1)
+                          AND table_name = ANY(%s)
                         """,
                         (required_tables,),
                     )
@@ -261,7 +261,7 @@ class TradeRepository:
                     cur.execute(
                         """
                         INSERT INTO wallets (address, name, signature_type)
-                        VALUES ($1, $2, $3)
+                        VALUES (%s, %s, %s)
                         ON CONFLICT (address) DO UPDATE
                         SET updated_at = NOW()
                         RETURNING id, address, name, signature_type, is_active,
@@ -301,7 +301,7 @@ class TradeRepository:
                         SELECT id, address, name, signature_type, is_active,
                                created_at, updated_at
                         FROM wallets
-                        WHERE address = $1
+                        WHERE address = %s
                         """,
                         (address,),
                     )
@@ -359,7 +359,7 @@ class TradeRepository:
                     cur.execute(
                         """
                         INSERT INTO markets (condition_id, question, end_date)
-                        VALUES ($1, $2, $3)
+                        VALUES (%s, %s, %s)
                         ON CONFLICT (condition_id) DO UPDATE
                         SET updated_at = NOW()
                         RETURNING id, condition_id, question, end_date, resolved,
@@ -399,7 +399,7 @@ class TradeRepository:
                         SELECT id, condition_id, question, end_date, resolved,
                                winning_side, resolution_price, created_at, updated_at
                         FROM markets
-                        WHERE condition_id = $1
+                        WHERE condition_id = %s
                         """,
                         (condition_id,),
                     )
@@ -459,7 +459,7 @@ class TradeRepository:
                             side, order_type, quantity, filled_quantity,
                             limit_price, avg_fill_price, neg_risk, status
                         )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         RETURNING id, wallet_id, market_id, order_id, token_id,
                                   side, order_type, quantity, filled_quantity,
                                   limit_price, avg_fill_price, exit_price,
@@ -522,30 +522,25 @@ class TradeRepository:
 
         logger.debug("Updating trade: %s", trade_id)
 
-        # Build dynamic update query
+        # Build dynamic update query using %s placeholders
         updates = ["updated_at = NOW()"]
         params = []
-        param_idx = 1
 
         if status is not None:
-            updates.append(f"status = ${param_idx}")
+            updates.append("status = %s")
             params.append(status.value)
-            param_idx += 1
 
         if filled_quantity is not None:
-            updates.append(f"filled_quantity = ${param_idx}")
+            updates.append("filled_quantity = %s")
             params.append(filled_quantity)
-            param_idx += 1
 
         if avg_fill_price is not None:
-            updates.append(f"avg_fill_price = ${param_idx}")
+            updates.append("avg_fill_price = %s")
             params.append(avg_fill_price)
-            param_idx += 1
 
         if filled_at is not None:
-            updates.append(f"filled_at = ${param_idx}")
+            updates.append("filled_at = %s")
             params.append(filled_at)
-            param_idx += 1
 
         # Add trade_id as the last parameter
         params.append(trade_id)
@@ -557,7 +552,7 @@ class TradeRepository:
                         f"""
                         UPDATE trades
                         SET {", ".join(updates)}
-                        WHERE id = ${param_idx}
+                        WHERE id = %s
                         RETURNING id, wallet_id, market_id, order_id, token_id,
                                   side, order_type, quantity, filled_quantity,
                                   limit_price, avg_fill_price, exit_price,
@@ -609,7 +604,7 @@ class TradeRepository:
                                neg_risk, status, created_at, filled_at,
                                closed_at, updated_at
                         FROM trades
-                        WHERE order_id = $1
+                        WHERE order_id = %s
                         """,
                         (order_id,),
                     )
@@ -648,7 +643,7 @@ class TradeRepository:
                                    neg_risk, status, created_at, filled_at,
                                    closed_at, updated_at
                             FROM trades
-                            WHERE wallet_id = $1
+                            WHERE wallet_id = %s
                               AND status IN ('open', 'partially_filled')
                             ORDER BY created_at DESC
                             """,

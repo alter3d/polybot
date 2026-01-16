@@ -1101,7 +1101,7 @@ class TestTradeRepositoryGetOpenTrades:
         # Verify the query included wallet_id parameter
         mock_cursor.execute.assert_called_once()
         call_args = mock_cursor.execute.call_args
-        assert "wallet_id = $1" in call_args[0][0]
+        assert "wallet_id = %s" in call_args[0][0]
 
     @patch.object(TradeRepository, "_verify_schema", return_value=True)
     @patch("src.db.repository.ConnectionPool")
