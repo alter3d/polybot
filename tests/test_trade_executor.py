@@ -1207,3 +1207,213 @@ class TestTradeExecutorMultiplierAppliedSizing:
         # $25.00 * 2.0 / $0.90 = 55.56 shares
         expected_shares = (25.0 * 2.0) / config.limit_price
         assert abs(call_kwargs["size"] - expected_shares) < 0.01
+
+
+class TestTradeExecutorImmediateFillHandling:
+    """Test immediate fill handling when CLOB response contains match data."""
+
+    @patch("src.trading.executor.ClobClient")
+    def test_immediate_match_sets_filled_status(self, mock_clob_client):
+        """Verify trade record created with FILLED status when order matches immediately."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
+        mock_client_instance.create_order.return_value = MagicMock()
+        mock_client_instance.get_address.return_value = "0x1234567890abcdef"
+        # Response indicates immediate match with full fill
+        # Order size = $20 / $0.90 limit = 22.222... shares
+        # takingAmount must be >= order size for FILLED status
+        mock_client_instance.post_order.return_value = {
+            "orderID": "0x1696f07adc0bc4342ea26b8ce0b3bb552fab2be255d5cc66c31f6b2a1463d186",
+            "status": "matched",
+            "takingAmount": "22.23",  # Slightly more than order to ensure FILLED
+            "makingAmount": "20.01",
+            "success": True,
+        }
+        mock_clob_client.return_value = mock_client_instance
+
+        # Create a mock repository
+        mock_repository = MagicMock()
+        mock_repository.is_enabled = True
+        mock_wallet = MagicMock()
+        mock_wallet.id = "wallet-uuid"
+        mock_repository.get_or_create_wallet.return_value = mock_wallet
+        mock_market = MagicMock()
+        mock_market.id = "market-uuid"
+        mock_repository.get_or_create_market.return_value = mock_market
+        mock_repository.create_trade.return_value = MagicMock(id="trade-uuid")
+
+        config = Config(
+            auto_trade_enabled=True,
+            private_key="test_key",
+            trade_amount_usd=20.0,
+        )
+        executor = TradeExecutor(config, repository=mock_repository)
+
+        opportunity = Opportunity(
+            market_id="condition-12345",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+            token_id="test-clob-token-id",
+        )
+        result = executor.notify(opportunity)
+        assert result is True
+
+        # Verify create_trade was called with correct values
+        mock_repository.create_trade.assert_called_once()
+        trade_arg = mock_repository.create_trade.call_args[0][0]
+
+        # Import TradeStatus to check the status
+        from src.db import TradeStatus
+        from decimal import Decimal
+
+        assert trade_arg.status == TradeStatus.FILLED
+        assert trade_arg.filled_quantity == Decimal("22.23")
+        # avg_fill_price = makingAmount / takingAmount = 20.01 / 22.23 ≈ 0.9
+        assert trade_arg.avg_fill_price is not None
+        assert abs(trade_arg.avg_fill_price - Decimal("0.9")) < Decimal("0.01")
+        assert trade_arg.filled_at is not None
+
+    @patch("src.trading.executor.ClobClient")
+    def test_immediate_partial_match_sets_partially_filled_status(self, mock_clob_client):
+        """Verify trade record created with PARTIALLY_FILLED when partial match."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
+        mock_client_instance.create_order.return_value = MagicMock()
+        mock_client_instance.get_address.return_value = "0x1234567890abcdef"
+        # Response indicates partial match (10 filled out of 22.22 ordered)
+        mock_client_instance.post_order.return_value = {
+            "orderID": "0xabc123",
+            "status": "matched",
+            "takingAmount": "10.0",
+            "makingAmount": "9.0",
+            "success": True,
+        }
+        mock_clob_client.return_value = mock_client_instance
+
+        mock_repository = MagicMock()
+        mock_repository.is_enabled = True
+        mock_wallet = MagicMock()
+        mock_wallet.id = "wallet-uuid"
+        mock_repository.get_or_create_wallet.return_value = mock_wallet
+        mock_market = MagicMock()
+        mock_market.id = "market-uuid"
+        mock_repository.get_or_create_market.return_value = mock_market
+        mock_repository.create_trade.return_value = MagicMock(id="trade-uuid")
+
+        config = Config(
+            auto_trade_enabled=True,
+            private_key="test_key",
+            trade_amount_usd=20.0,
+        )
+        executor = TradeExecutor(config, repository=mock_repository)
+
+        opportunity = Opportunity(
+            market_id="condition-12345",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+            token_id="test-clob-token-id",
+        )
+        result = executor.notify(opportunity)
+        assert result is True
+
+        mock_repository.create_trade.assert_called_once()
+        trade_arg = mock_repository.create_trade.call_args[0][0]
+
+        from src.db import TradeStatus
+        from decimal import Decimal
+
+        assert trade_arg.status == TradeStatus.PARTIALLY_FILLED
+        assert trade_arg.filled_quantity == Decimal("10.0")
+
+    @patch("src.trading.executor.ClobClient")
+    def test_no_match_creates_open_trade(self, mock_clob_client):
+        """Verify trade record created with OPEN status when not matched."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
+        mock_client_instance.create_order.return_value = MagicMock()
+        mock_client_instance.get_address.return_value = "0x1234567890abcdef"
+        # Response indicates order is live (not matched)
+        mock_client_instance.post_order.return_value = {
+            "orderID": "0xabc123",
+            "status": "live",
+            "success": True,
+        }
+        mock_clob_client.return_value = mock_client_instance
+
+        mock_repository = MagicMock()
+        mock_repository.is_enabled = True
+        mock_wallet = MagicMock()
+        mock_wallet.id = "wallet-uuid"
+        mock_repository.get_or_create_wallet.return_value = mock_wallet
+        mock_market = MagicMock()
+        mock_market.id = "market-uuid"
+        mock_repository.get_or_create_market.return_value = mock_market
+        mock_repository.create_trade.return_value = MagicMock(id="trade-uuid")
+
+        config = Config(
+            auto_trade_enabled=True,
+            private_key="test_key",
+            trade_amount_usd=20.0,
+        )
+        executor = TradeExecutor(config, repository=mock_repository)
+
+        opportunity = Opportunity(
+            market_id="condition-12345",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+            token_id="test-clob-token-id",
+        )
+        result = executor.notify(opportunity)
+        assert result is True
+
+        mock_repository.create_trade.assert_called_once()
+        trade_arg = mock_repository.create_trade.call_args[0][0]
+
+        from src.db import TradeStatus
+        from decimal import Decimal
+
+        assert trade_arg.status == TradeStatus.OPEN
+        assert trade_arg.filled_quantity == Decimal("0")
+        assert trade_arg.avg_fill_price is None
+        assert trade_arg.filled_at is None
+
+    @patch("src.trading.executor.ClobClient")
+    def test_no_repository_skips_trade_record_creation(self, mock_clob_client):
+        """Verify no errors when repository is not provided."""
+        mock_client_instance = MagicMock()
+        mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
+        mock_client_instance.create_order.return_value = MagicMock()
+        mock_client_instance.post_order.return_value = {
+            "orderID": "0xabc123",
+            "status": "matched",
+            "takingAmount": "22.22",
+            "makingAmount": "20.00",
+            "success": True,
+        }
+        mock_clob_client.return_value = mock_client_instance
+
+        config = Config(
+            auto_trade_enabled=True,
+            private_key="test_key",
+            trade_amount_usd=20.0,
+        )
+        # No repository provided
+        executor = TradeExecutor(config)
+
+        opportunity = Opportunity(
+            market_id="condition-12345",
+            side="YES",
+            price=0.80,
+            detected_at=datetime.now(),
+            source="last_trade",
+            token_id="test-clob-token-id",
+        )
+        # Should not raise any errors
+        result = executor.notify(opportunity)
+        assert result is True

@@ -4,6 +4,7 @@ This module provides the TradeExecutor class for automatically executing
 trades on detected opportunities via the Polymarket CLOB API.
 """
 
+import decimal
 import logging
 import time
 from decimal import Decimal
@@ -14,7 +15,7 @@ from py_clob_client.clob_types import OrderArgs, OrderType, PartialCreateOrderOp
 from py_clob_client.constants import POLYGON
 
 from src.config import Config
-from src.db import OrderSide, TradeSide
+from src.db import OrderSide, TradeSide, TradeStatus
 from src.db.models import Trade
 from src.db.repository import TradeRepository
 from src.market.opportunity_detector import Opportunity
@@ -576,10 +577,15 @@ class TradeExecutor(BaseNotifier):
         Gracefully handles missing repository or database errors without
         affecting order execution. Trade tracking is optional functionality.
 
+        When the CLOB API response indicates an immediate match (status='matched'),
+        the trade record is created with the filled quantity and calculated
+        average fill price from the response data.
+
         Args:
             opportunity: The opportunity containing market and token information.
             shares: Number of shares purchased.
-            response: API response from order submission (may contain order_id).
+            response: API response from order submission (may contain order_id,
+                      status, takingAmount, makingAmount for immediate fills).
         """
         if not self._repository or not self._repository.is_enabled:
             logger.debug("Trade repository not available, skipping trade record")
@@ -616,7 +622,56 @@ class TradeExecutor(BaseNotifier):
             # Map opportunity side to TradeSide enum
             trade_side = TradeSide.YES if opportunity.side.upper() == "YES" else TradeSide.NO
 
-            # Create trade record
+            # Check if order was immediately matched (filled) from CLOB response
+            # Response includes: status, takingAmount, makingAmount when matched
+            filled_quantity = Decimal("0")
+            avg_fill_price = None
+            trade_status = TradeStatus.OPEN
+            filled_at = None
+
+            if response and isinstance(response, dict):
+                response_status = response.get("status", "").lower()
+                if response_status == "matched":
+                    # Order was immediately matched - extract fill data
+                    taking_amount_str = response.get("takingAmount")
+                    making_amount_str = response.get("makingAmount")
+
+                    if taking_amount_str:
+                        try:
+                            filled_quantity = Decimal(str(taking_amount_str))
+
+                            # Calculate avg fill price: makingAmount / takingAmount
+                            # makingAmount is what we paid, takingAmount is shares received
+                            if making_amount_str and filled_quantity > 0:
+                                making_amount = Decimal(str(making_amount_str))
+                                avg_fill_price = making_amount / filled_quantity
+
+                            # Determine status based on fill vs order quantity
+                            order_quantity = Decimal(str(shares))
+                            if filled_quantity >= order_quantity:
+                                trade_status = TradeStatus.FILLED
+                            elif filled_quantity > 0:
+                                trade_status = TradeStatus.PARTIALLY_FILLED
+
+                            # Set filled_at to now for immediate matches
+                            if trade_status in (TradeStatus.FILLED, TradeStatus.PARTIALLY_FILLED):
+                                from datetime import datetime, timezone
+                                filled_at = datetime.now(timezone.utc)
+
+                            logger.debug(
+                                "Order immediately matched: filled=%.4f, avg_price=%.4f, status=%s",
+                                filled_quantity,
+                                avg_fill_price or Decimal("0"),
+                                trade_status.value,
+                            )
+                        except (ValueError, TypeError, decimal.InvalidOperation) as e:
+                            logger.warning(
+                                "Failed to parse fill data from response: %s (taking=%s, making=%s)",
+                                e, taking_amount_str, making_amount_str
+                            )
+                            # Continue with defaults if parsing fails
+
+            # Create trade record with fill data if available
             trade = Trade(
                 wallet_id=wallet.id,
                 market_id=market.id,
@@ -627,6 +682,10 @@ class TradeExecutor(BaseNotifier):
                 limit_price=Decimal(str(self._config.limit_price)),
                 order_id=order_id,
                 neg_risk=opportunity.neg_risk,
+                filled_quantity=filled_quantity,
+                avg_fill_price=avg_fill_price,
+                status=trade_status,
+                filled_at=filled_at,
             )
 
             created_trade = self._repository.create_trade(trade)
