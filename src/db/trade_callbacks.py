@@ -142,8 +142,11 @@ class TradeTrackingCallback:
 
         # Calculate average fill price from order message if available
         avg_fill_price: Optional[Decimal] = None
+        cost_basis_usd: Optional[Decimal] = None
         if order_msg.price and size_matched > 0:
             avg_fill_price = Decimal(str(order_msg.price))
+            # Calculate cost basis in USD: filled_quantity * avg_fill_price
+            cost_basis_usd = size_matched * avg_fill_price
 
         # Update the trade in database
         logger.info(
@@ -161,6 +164,7 @@ class TradeTrackingCallback:
             filled_quantity=size_matched,
             avg_fill_price=avg_fill_price,
             filled_at=filled_at,
+            cost_basis_usd=cost_basis_usd,
         )
 
     def handle_trade_message(self, trade_msg: TradeMessage) -> None:
@@ -219,6 +223,7 @@ class TradeTrackingCallback:
         # Calculate weighted average fill price
         # If we have an existing avg_fill_price, compute weighted average
         avg_fill_price: Optional[Decimal] = None
+        cost_basis_usd: Optional[Decimal] = None
         if trade_msg.price:
             trade_price = Decimal(str(trade_msg.price))
             if trade.avg_fill_price and trade.filled_quantity > 0:
@@ -230,6 +235,9 @@ class TradeTrackingCallback:
                 avg_fill_price = total_value / new_filled_quantity
             else:
                 avg_fill_price = trade_price
+            # Calculate cost basis in USD: filled_quantity * avg_fill_price
+            if avg_fill_price:
+                cost_basis_usd = new_filled_quantity * avg_fill_price
 
         # Determine filled_at timestamp
         filled_at: Optional[datetime] = None
@@ -257,6 +265,7 @@ class TradeTrackingCallback:
             filled_quantity=new_filled_quantity,
             avg_fill_price=avg_fill_price,
             filled_at=filled_at,
+            cost_basis_usd=cost_basis_usd,
         )
 
 

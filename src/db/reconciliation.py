@@ -5,6 +5,7 @@ trade state with the Polymarket CLOB API on application startup.
 """
 
 import logging
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
@@ -306,11 +307,21 @@ class TradeReconciler:
 
         # Parse average price if available
         avg_fill_price = None
+        cost_basis_usd = None
         if avg_price_str:
             try:
                 avg_fill_price = Decimal(str(avg_price_str))
+                # Calculate cost basis in USD: filled_quantity * avg_fill_price
+                if size_matched > 0:
+                    cost_basis_usd = size_matched * avg_fill_price
             except (ValueError, TypeError, InvalidOperation):
                 pass
+
+        # Determine filled_at timestamp for completed orders
+        filled_at: Optional[datetime] = None
+        if new_status in (TradeStatus.FILLED, TradeStatus.PARTIALLY_FILLED) and size_matched > 0:
+            # Use current time since we don't have the actual fill time from API
+            filled_at = datetime.now(timezone.utc)
 
         # Update the trade in database
         logger.info(
@@ -327,6 +338,8 @@ class TradeReconciler:
             status=new_status,
             filled_quantity=size_matched,
             avg_fill_price=avg_fill_price,
+            filled_at=filled_at,
+            cost_basis_usd=cost_basis_usd,
         )
 
         return True

@@ -457,9 +457,10 @@ class TradeRepository:
                         INSERT INTO trades (
                             wallet_id, market_id, order_id, token_id,
                             side, order_type, quantity, filled_quantity,
-                            limit_price, avg_fill_price, neg_risk, status
+                            limit_price, avg_fill_price, neg_risk, status,
+                            filled_at, cost_basis_usd
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         RETURNING id, wallet_id, market_id, order_id, token_id,
                                   side, order_type, quantity, filled_quantity,
                                   limit_price, avg_fill_price, exit_price,
@@ -480,6 +481,8 @@ class TradeRepository:
                             trade.avg_fill_price,
                             trade.neg_risk,
                             trade.status.value,
+                            trade.filled_at,
+                            trade.cost_basis_usd,
                         ),
                     )
                     row = cur.fetchone()
@@ -501,6 +504,7 @@ class TradeRepository:
         filled_quantity: Optional[Decimal] = None,
         avg_fill_price: Optional[Decimal] = None,
         filled_at: Optional[datetime] = None,
+        cost_basis_usd: Optional[Decimal] = None,
     ) -> Optional[Trade]:
         """Update an existing trade record.
 
@@ -512,6 +516,7 @@ class TradeRepository:
             filled_quantity: New filled quantity.
             avg_fill_price: New average fill price.
             filled_at: Timestamp when order was filled.
+            cost_basis_usd: Total cost of position in USD.
 
         Returns:
             Updated Trade dataclass, None on failure.
@@ -541,6 +546,10 @@ class TradeRepository:
         if filled_at is not None:
             updates.append("filled_at = %s")
             params.append(filled_at)
+
+        if cost_basis_usd is not None:
+            updates.append("cost_basis_usd = %s")
+            params.append(cost_basis_usd)
 
         # Add trade_id as the last parameter
         params.append(trade_id)

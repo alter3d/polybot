@@ -632,6 +632,7 @@ class TradeExecutor(BaseNotifier):
             # Response includes: status, takingAmount, makingAmount when matched
             filled_quantity = Decimal("0")
             avg_fill_price = None
+            cost_basis_usd = None
             trade_status = TradeStatus.OPEN
             filled_at = None
 
@@ -651,6 +652,8 @@ class TradeExecutor(BaseNotifier):
                             if making_amount_str and filled_quantity > 0:
                                 making_amount = Decimal(str(making_amount_str))
                                 avg_fill_price = making_amount / filled_quantity
+                                # Calculate cost basis in USD: filled_quantity * avg_fill_price
+                                cost_basis_usd = filled_quantity * avg_fill_price
 
                             # Determine status based on fill vs order quantity
                             order_quantity = Decimal(str(shares))
@@ -665,9 +668,10 @@ class TradeExecutor(BaseNotifier):
                                 filled_at = datetime.now(timezone.utc)
 
                             logger.debug(
-                                "Order immediately matched: filled=%.4f, avg_price=%.4f, status=%s",
+                                "Order immediately matched: filled=%.4f, avg_price=%.4f, cost_basis=%.4f, status=%s",
                                 filled_quantity,
                                 avg_fill_price or Decimal("0"),
+                                cost_basis_usd or Decimal("0"),
                                 trade_status.value,
                             )
                         except (ValueError, TypeError, decimal.InvalidOperation) as e:
@@ -690,6 +694,7 @@ class TradeExecutor(BaseNotifier):
                 neg_risk=opportunity.neg_risk,
                 filled_quantity=filled_quantity,
                 avg_fill_price=avg_fill_price,
+                cost_basis_usd=cost_basis_usd,
                 status=trade_status,
                 filled_at=filled_at,
             )
