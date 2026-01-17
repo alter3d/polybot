@@ -58,6 +58,13 @@ from src.market.timing import (
     get_current_market_window,
     time_until_window_ends,
 )
+from src.db.reconciliation import TradeReconciler
+from src.db.repository import (
+    DatabaseConnectionError,
+    DatabaseSchemaError,
+    TradeRepository,
+)
+from src.db.trade_callbacks import TradeTrackingCallback
 from src.notifications.console import ConsoleNotifier
 from src.trading.executor import TradeExecutor
 
@@ -100,6 +107,12 @@ class PolymarketMonitor:
         self._websocket: MarketWebSocket | None = None
         self._user_websocket: UserChannelWebSocket | None = None
         self._notifier = ConsoleNotifier()
+        # TradeRepository is initialized later in run() after logging is configured
+        # This ensures database connection logs are captured
+        self._repository: TradeRepository | None = None
+        # TradeTrackingCallback handles WebSocket trade/order updates to the database
+        # Initialized after repository in run()
+        self._trade_callbacks: TradeTrackingCallback | None = None
         # TradeExecutor is initialized later in run() after logging is configured
         # This ensures all initialization logs are captured
         self._trade_executor: TradeExecutor | None = None
@@ -328,8 +341,8 @@ class PolymarketMonitor:
     def _on_user_channel_message(self, msg_type: str, data: Any) -> None:
         """Handle incoming user channel WebSocket messages.
 
-        Logs trade and order messages for visibility. No business logic execution
-        yet - this is a framework for future trade/order event handling.
+        Logs trade and order messages for visibility and forwards them to
+        TradeTrackingCallback for database persistence.
 
         Args:
             msg_type: Type of the message (trade, order, subscribed, etc.).
@@ -345,6 +358,9 @@ class PolymarketMonitor:
                 data.size,
                 data.status or "FILLED",
             )
+            # Forward to trade tracking callback for database persistence
+            if self._trade_callbacks:
+                self._trade_callbacks.handle_trade_message(data)
         elif isinstance(data, OrderMessage):
             # Log order updates at INFO level for visibility
             logger.info(
@@ -356,6 +372,9 @@ class PolymarketMonitor:
                 data.size_matched,
                 data.original_size,
             )
+            # Forward to trade tracking callback for database persistence
+            if self._trade_callbacks:
+                self._trade_callbacks.handle_order_message(data)
         elif msg_type == "subscribed":
             # Log successful subscription confirmation
             logger.info("User channel subscription confirmed")
@@ -884,9 +903,42 @@ class PolymarketMonitor:
         # Setup logging
         self._setup_logging()
 
-        # Initialize TradeExecutor after logging is configured
-        # This ensures all initialization logs (including any errors) are captured
-        self._trade_executor = TradeExecutor(self._config)
+        # Initialize TradeRepository for database persistence
+        # - If DATABASE_URL is not configured, gracefully disables persistence
+        # - If DATABASE_URL is configured, verifies schema and runs migrations
+        # - If database is configured but fails to initialize, abort safely
+        try:
+            self._repository = TradeRepository(self._config.database_url)
+        except (DatabaseConnectionError, DatabaseSchemaError) as e:
+            logger.error(
+                "CRITICAL: Database is configured but failed to initialize: %s", e
+            )
+            logger.error(
+                "Database is a critical component. Please fix the database connection "
+                "or remove DATABASE_URL to disable trade tracking."
+            )
+            print("\n" + "=" * 60)
+            print("ERROR: Database initialization failed")
+            print(f"  {e}")
+            print("=" * 60 + "\n")
+            return
+
+        # Initialize TradeTrackingCallback for WebSocket trade/order updates
+        # This processes OrderMessage and TradeMessage events to update database
+        self._trade_callbacks = TradeTrackingCallback(self._repository)
+
+        # Initialize TradeExecutor after logging and repository are configured
+        # This ensures all initialization logs are captured and trades can be persisted
+        self._trade_executor = TradeExecutor(self._config, repository=self._repository)
+
+        # Run trade reconciliation BEFORE websocket connections
+        # This syncs database state with CLOB API for any missed updates while offline
+        reconciler = TradeReconciler(self._config, self._repository)
+        if reconciler.is_enabled:
+            updated_count = reconciler.reconcile()
+            logger.info("Trade reconciliation complete: %d trades updated", updated_count)
+        else:
+            logger.debug("Trade reconciliation skipped (not configured)")
 
         # Initialize user channel WebSocket for trade/order updates
         # This runs in background thread and auto-reconnects on disconnect
@@ -926,7 +978,8 @@ class PolymarketMonitor:
     def stop(self) -> None:
         """Stop the monitor and clean up resources.
 
-        Cleanly shuts down market WebSocket, user_channel WebSocket, and API clients.
+        Cleanly shuts down market WebSocket, user_channel WebSocket, database
+        connection pool, and API clients.
         """
         if not self._running:
             return
@@ -949,6 +1002,11 @@ class PolymarketMonitor:
         if self._gamma_client:
             self._gamma_client.close()
             self._gamma_client = None
+
+        # Close database connection pool
+        if self._repository:
+            self._repository.close()
+            self._repository = None
 
         logger.info("Cleanup complete")
 
