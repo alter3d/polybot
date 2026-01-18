@@ -1,4 +1,7 @@
 
+# auto-claude changes this file all the time and creates merge conflicts;  don't commit it
+.claude_settings.json
+
 # redeemer is a work-in-progress that may never work, ignore it for now
 redeemer/
 
