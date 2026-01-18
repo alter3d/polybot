@@ -14,13 +14,13 @@ class Config:
 
     Attributes:
         opportunity_threshold: Price threshold for opportunity detection (default: 0.70)
-        trade_amount_usd: Dollar amount per trade for automatic trading (default: 20.0)
+        trade_base_shares: Base number of shares per trade (default: 3.0)
         auto_trade_enabled: Enable automatic trade execution (default: False)
         private_key: Wallet private key for signing transactions (default: empty)
         signature_type: Wallet signature type - 0=EOA, 1=Magic, 2=Browser (default: 0)
         funder_address: Funder address required when signature_type=1 (Magic wallet) (default: empty)
         reversal_multiplier: Multiplier for position size during market reversals (default: 1.5)
-        limit_price: Limit price multiplier for order placement (default: 0.90)
+        limit_buy_price: Limit buy price for order placement (default: 0.90)
         monitor_start_minutes_before_end: Minutes before window end to start monitoring (default: 3)
         clob_host: CLOB API endpoint
         gamma_host: Gamma API endpoint for market discovery
@@ -35,13 +35,13 @@ class Config:
 
     # Trading parameters
     opportunity_threshold: float = 0.70  # Price threshold for opportunities
-    trade_amount_usd: float = 20.0  # Dollar amount per trade
+    trade_base_shares: float = 3.0  # Base number of shares per trade
     auto_trade_enabled: bool = False  # Enable automatic trade execution
     private_key: str = ""  # Wallet private key for signing transactions
     signature_type: int = 0  # Wallet type: 0=EOA, 1=Magic, 2=Browser
     funder_address: str = ""  # Funder address for SIGNATURE_TYPE=1 (Magic wallet)
     reversal_multiplier: float = 1.5  # Multiplier for position size during reversals
-    limit_price: float = 0.90  # Limit price multiplier for order placement
+    limit_buy_price: float = 0.90  # Limit buy price for order placement
 
     # Timing parameters
     monitor_start_minutes_before_end: int = 3  # Start monitoring 3 min before window end
@@ -68,13 +68,13 @@ class Config:
 
         Environment variables:
             OPPORTUNITY_THRESHOLD: Price threshold (default: 0.70)
-            TRADE_AMOUNT_USD: Dollar amount per trade (default: 20.0)
+            TRADE_BASE_SHARES: Base number of shares per trade (default: 3.0)
             AUTO_TRADE_ENABLED: Enable automatic trade execution (default: false)
             PRIVATE_KEY: Wallet private key for signing transactions (default: empty)
             SIGNATURE_TYPE: Wallet type - 0=EOA, 1=Magic, 2=Browser (default: 0)
             FUNDER_ADDRESS: Funder address required when SIGNATURE_TYPE=1 (default: empty)
             REVERSAL_MULTIPLIER: Multiplier for position size during reversals (default: 1.5)
-            LIMIT_PRICE: Limit price multiplier for order placement (default: 0.90)
+            LIMIT_BUY_PRICE: Limit buy price for order placement (default: 0.90)
             MONITOR_START_MINUTES: Minutes before window end to start monitoring (default: 3)
             LOG_LEVEL: Logging verbosity (default: INFO)
             WS_USER_HOST: WebSocket endpoint for user channel (default: wss://ws-subscriptions-clob.polymarket.com/ws/user)
@@ -94,13 +94,13 @@ class Config:
 
         return cls(
             opportunity_threshold=float(environ.get("OPPORTUNITY_THRESHOLD", "0.70")),
-            trade_amount_usd=float(environ.get("TRADE_AMOUNT_USD", "20.0")),
+            trade_base_shares=float(environ.get("TRADE_BASE_SHARES", "3.0")),
             auto_trade_enabled=auto_trade_enabled,
             private_key=environ.get("PRIVATE_KEY", ""),
             signature_type=int(environ.get("SIGNATURE_TYPE", "0")),
             funder_address=environ.get("FUNDER_ADDRESS", ""),
             reversal_multiplier=float(environ.get("REVERSAL_MULTIPLIER", "1.5")),
-            limit_price=float(environ.get("LIMIT_PRICE", "0.90")),
+            limit_buy_price=float(environ.get("LIMIT_BUY_PRICE", "0.90")),
             monitor_start_minutes_before_end=int(environ.get("MONITOR_START_MINUTES", "3")),
             log_level=environ.get("LOG_LEVEL", "INFO"),
             ws_user_host=environ.get("WS_USER_HOST", "wss://ws-subscriptions-clob.polymarket.com/ws/user"),

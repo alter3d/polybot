@@ -1078,7 +1078,7 @@ def main() -> int:
     if args.dry_run:
         print("Configuration valid:")
         print(f"  Threshold: ${config.opportunity_threshold:.2f}")
-        print(f"  Trade amount USD: ${config.trade_amount_usd:.2f}")
+        print(f"  Trade base shares: {config.trade_base_shares:.2f}")
         print(f"  Reversal multiplier: {config.reversal_multiplier:.1f}x")
         print(f"  Auto trade enabled: {config.auto_trade_enabled}")
         print(f"  Monitor start: {config.monitor_start_minutes_before_end} min before end")

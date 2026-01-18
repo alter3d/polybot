@@ -51,22 +51,22 @@ class TestTradeExecutorInit:
         executor = TradeExecutor(config)
         assert not executor.is_enabled
 
-    def test_init_disabled_when_zero_trade_amount(self):
-        """Verify executor is disabled when trade_amount_usd is zero."""
+    def test_init_disabled_when_zero_base_shares(self):
+        """Verify executor is disabled when trade_base_shares is zero."""
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=0.0,
+            trade_base_shares=0.0,
         )
         executor = TradeExecutor(config)
         assert not executor.is_enabled
 
-    def test_init_disabled_when_negative_trade_amount(self):
-        """Verify executor is disabled when trade_amount_usd is negative."""
+    def test_init_disabled_when_negative_base_shares(self):
+        """Verify executor is disabled when trade_base_shares is negative."""
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=-10.0,
+            trade_base_shares=-10.0,
         )
         executor = TradeExecutor(config)
         assert not executor.is_enabled
@@ -81,7 +81,7 @@ class TestTradeExecutorInit:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_private_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config)
         assert executor.is_enabled
@@ -96,7 +96,7 @@ class TestTradeExecutorInit:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_private_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         TradeExecutor(config)
 
@@ -111,7 +111,7 @@ class TestTradeExecutorInit:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_private_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config)
         assert not executor.is_enabled
@@ -121,7 +121,7 @@ class TestTradeExecutorInit:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
             signature_type=1,
             funder_address="",  # Missing funder address
         )
@@ -138,7 +138,7 @@ class TestTradeExecutorInit:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_private_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
             signature_type=1,
             funder_address="0xfunder1234567890abcdef1234567890abcdef1234",
         )
@@ -156,7 +156,7 @@ class TestTradeExecutorInit:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_private_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
             signature_type=1,
             funder_address=funder_address,
         )
@@ -178,7 +178,7 @@ class TestTradeExecutorInit:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_private_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
             signature_type=0,  # EOA wallet type
             funder_address="0xsome_address",  # Should be ignored
         )
@@ -197,43 +197,40 @@ class TestTradeExecutorInit:
 
 
 class TestTradeExecutorShareCalculation:
-    """Test share quantity calculation."""
+    """Test share quantity calculation with base shares and multiplier."""
 
-    def test_calculate_shares_twenty_dollars(self):
-        """Verify $20 at $0.90 = 22.22 shares."""
-        config = Config(auto_trade_enabled=False)
+    def test_calculate_shares_default_multiplier(self):
+        """Verify default multiplier of 1.0 returns base shares unchanged."""
+        config = Config(auto_trade_enabled=False, trade_base_shares=3.0)
         executor = TradeExecutor(config)
-        shares = executor._calculate_shares(20.0)
-        assert abs(shares - 22.22) < 0.01
+        shares = executor._calculate_shares()
+        assert shares == 3.0
 
-    def test_calculate_shares_one_dollar(self):
-        """Verify $1 at $0.90 = 1.11 shares."""
-        config = Config(auto_trade_enabled=False)
+    def test_calculate_shares_with_multiplier_1(self):
+        """Verify multiplier=1.0 returns base shares."""
+        config = Config(auto_trade_enabled=False, trade_base_shares=5.0)
         executor = TradeExecutor(config)
-        shares = executor._calculate_shares(1.0)
-        assert abs(shares - 1.11) < 0.01
+        shares = executor._calculate_shares(multiplier=1.0)
+        assert shares == 5.0
 
-    def test_calculate_shares_hundred_dollars(self):
-        """Verify $100 at $0.90 = 111.11 shares."""
-        config = Config(auto_trade_enabled=False)
+    def test_calculate_shares_with_multiplier_2(self):
+        """Verify multiplier=2.0 doubles the base shares."""
+        config = Config(auto_trade_enabled=False, trade_base_shares=3.0)
         executor = TradeExecutor(config)
-        shares = executor._calculate_shares(100.0)
-        assert abs(shares - 111.11) < 0.01
+        shares = executor._calculate_shares(multiplier=2.0)
+        assert shares == 6.0
 
-    def test_calculate_shares_uses_config_limit_price(self):
-        """Verify share calculation uses config.limit_price and rounds to 2 decimals."""
-        config = Config(auto_trade_enabled=False, limit_price=0.85)
+    def test_calculate_shares_with_fractional_multiplier(self):
+        """Verify fractional multiplier (1.5x) scales correctly."""
+        config = Config(auto_trade_enabled=False, trade_base_shares=4.0)
         executor = TradeExecutor(config)
-        amount = 50.0
-        shares = executor._calculate_shares(amount)
-        # Expected is rounded to 2 decimals to match exchange precision
-        expected = round(amount / config.limit_price, 2)
-        assert shares == expected
+        shares = executor._calculate_shares(multiplier=1.5)
+        assert shares == 6.0
 
-    def test_default_limit_price_is_ninety_cents(self):
-        """Verify default config.limit_price is $0.90."""
+    def test_default_limit_buy_price_is_ninety_cents(self):
+        """Verify default config.limit_buy_price is $0.90."""
         config = Config(auto_trade_enabled=False)
-        assert config.limit_price == 0.90
+        assert config.limit_buy_price == 0.90
 
     def test_calculate_shares_rounds_to_two_decimal_places(self):
         """Verify shares are rounded to 2 decimals to match exchange precision.
@@ -242,18 +239,33 @@ class TestTradeExecutorShareCalculation:
         quantities, so if we store unrounded values, fills will appear partial
         when they're actually complete.
 
-        Example: $5 at $0.99 = 5.050505... raw, but exchange fills 5.05.
-        Without rounding, filled_quantity(5.05) < quantity(5.050505) = partial.
+        Example: 3.333 base shares * 1.0 = 3.333... raw, but exchange fills 3.33.
+        Without rounding, filled_quantity(3.33) < quantity(3.333) = partial.
         """
-        config = Config(auto_trade_enabled=False, limit_price=0.99)
+        config = Config(auto_trade_enabled=False, trade_base_shares=3.333)
         executor = TradeExecutor(config)
 
-        # This is the exact case from QA: $5 / $0.99 = 5.050505050505...
-        shares = executor._calculate_shares(5.0)
-        assert shares == 5.05  # Must be exactly 5.05, not 5.050505...
+        # This tests the rounding behavior: 3.333 * 1.0 = 3.333... rounds to 3.33
+        shares = executor._calculate_shares(multiplier=1.0)
+        assert shares == 3.33  # Must be exactly 3.33, not 3.333...
 
         # Verify no extra precision by checking string representation
-        assert str(shares) == "5.05"
+        assert str(shares) == "3.33"
+
+    def test_calculate_shares_with_multiplier_rounding(self):
+        """Verify multiplier calculations are rounded correctly."""
+        config = Config(auto_trade_enabled=False, trade_base_shares=3.0)
+        executor = TradeExecutor(config)
+
+        # 3.0 * 1.5 = 4.5 - no rounding needed
+        shares = executor._calculate_shares(multiplier=1.5)
+        assert shares == 4.5
+
+        # Test case that requires rounding: 3.0 * 1.111 = 3.333
+        config2 = Config(auto_trade_enabled=False, trade_base_shares=3.0)
+        executor2 = TradeExecutor(config2)
+        shares2 = executor2._calculate_shares(multiplier=1.111)
+        assert shares2 == 3.33
 
 
 class TestTradeExecutorNotify:
@@ -286,7 +298,7 @@ class TestTradeExecutorNotify:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config)
 
@@ -314,7 +326,7 @@ class TestTradeExecutorNotify:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config)
 
@@ -385,7 +397,7 @@ class TestTradeExecutorNotifyBatch:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config)
 
@@ -413,7 +425,7 @@ class TestTradeExecutorNotifyBatch:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config)
 
@@ -741,7 +753,7 @@ class TestTradeExecutorIntegration:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config)
 
@@ -770,7 +782,7 @@ class TestTradeExecutorIntegration:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config)
 
@@ -799,7 +811,7 @@ class TestTradeExecutorIntegration:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config)
 
@@ -829,7 +841,7 @@ class TestTradeExecutorIntegration:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config)
 
@@ -849,8 +861,9 @@ class TestTradeExecutorIntegration:
         mock_order_args.assert_called_once()
         call_kwargs = mock_order_args.call_args[1]
         assert call_kwargs["token_id"] == clob_token_id
-        assert call_kwargs["price"] == config.limit_price
-        assert abs(call_kwargs["size"] - 22.22) < 0.01
+        assert call_kwargs["price"] == config.limit_buy_price
+        # 3.0 base shares * 1.0 multiplier = 3.0 shares
+        assert call_kwargs["size"] == 3.0
         assert call_kwargs["side"] == "BUY"
 
     @patch("src.trading.executor.ClobClient")
@@ -866,7 +879,7 @@ class TestTradeExecutorIntegration:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config)
 
@@ -898,7 +911,7 @@ class TestTradeExecutorIntegration:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config)
 
@@ -935,7 +948,7 @@ class TestTradeExecutorIntegration:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config)
 
@@ -956,14 +969,14 @@ class TestTradeExecutorIntegration:
 
 
 class TestTradeExecutorMultiplierAppliedSizing:
-    """Test multiplier-applied trade sizing."""
+    """Test multiplier-applied trade sizing using base shares."""
 
     @patch("src.trading.executor.ClobClient")
     @patch("src.trading.executor.OrderArgs")
-    def test_notify_with_default_multiplier_uses_base_amount(
+    def test_notify_with_default_multiplier_uses_base_shares(
         self, mock_order_args, mock_clob_client
     ):
-        """Verify notify with default multiplier uses base trade amount."""
+        """Verify notify with default multiplier uses base shares unchanged."""
         mock_client_instance = MagicMock()
         mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
         mock_client_instance.create_order.return_value = MagicMock()
@@ -973,7 +986,7 @@ class TestTradeExecutorMultiplierAppliedSizing:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config)
 
@@ -989,19 +1002,18 @@ class TestTradeExecutorMultiplierAppliedSizing:
         result = executor.notify(opportunity)
         assert result is True
 
-        # Verify OrderArgs was called with base trade amount shares
+        # Verify OrderArgs was called with base shares (3.0 * 1.0 = 3.0)
         mock_order_args.assert_called_once()
         call_kwargs = mock_order_args.call_args[1]
-        # $20.00 / $0.90 = 22.22 shares (config.limit_price is 0.90)
-        expected_shares = 20.0 / config.limit_price
-        assert abs(call_kwargs["size"] - expected_shares) < 0.01
+        expected_shares = config.trade_base_shares * 1.0
+        assert call_kwargs["size"] == expected_shares
 
     @patch("src.trading.executor.ClobClient")
     @patch("src.trading.executor.OrderArgs")
-    def test_notify_with_multiplier_1_uses_base_amount(
+    def test_notify_with_multiplier_1_uses_base_shares(
         self, mock_order_args, mock_clob_client
     ):
-        """Verify notify with explicit multiplier=1.0 uses base trade amount."""
+        """Verify notify with explicit multiplier=1.0 uses base shares."""
         mock_client_instance = MagicMock()
         mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
         mock_client_instance.create_order.return_value = MagicMock()
@@ -1011,7 +1023,7 @@ class TestTradeExecutorMultiplierAppliedSizing:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config)
 
@@ -1028,15 +1040,16 @@ class TestTradeExecutorMultiplierAppliedSizing:
 
         mock_order_args.assert_called_once()
         call_kwargs = mock_order_args.call_args[1]
-        expected_shares = 20.0 / config.limit_price
-        assert abs(call_kwargs["size"] - expected_shares) < 0.01
+        # 3.0 base shares * 1.0 multiplier = 3.0 shares
+        expected_shares = config.trade_base_shares * 1.0
+        assert call_kwargs["size"] == expected_shares
 
     @patch("src.trading.executor.ClobClient")
     @patch("src.trading.executor.OrderArgs")
-    def test_notify_with_multiplier_2_doubles_trade_amount(
+    def test_notify_with_multiplier_2_doubles_shares(
         self, mock_order_args, mock_clob_client
     ):
-        """Verify notify with multiplier=2.0 doubles the trade amount."""
+        """Verify notify with multiplier=2.0 doubles the base shares."""
         mock_client_instance = MagicMock()
         mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
         mock_client_instance.create_order.return_value = MagicMock()
@@ -1046,7 +1059,7 @@ class TestTradeExecutorMultiplierAppliedSizing:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config)
 
@@ -1063,16 +1076,16 @@ class TestTradeExecutorMultiplierAppliedSizing:
 
         mock_order_args.assert_called_once()
         call_kwargs = mock_order_args.call_args[1]
-        # $20.00 * 2.0 / $0.90 = 44.44 shares
-        expected_shares = (20.0 * 2.0) / config.limit_price
-        assert abs(call_kwargs["size"] - expected_shares) < 0.01
+        # 3.0 base shares * 2.0 multiplier = 6.0 shares
+        expected_shares = config.trade_base_shares * 2.0
+        assert call_kwargs["size"] == expected_shares
 
     @patch("src.trading.executor.ClobClient")
     @patch("src.trading.executor.OrderArgs")
-    def test_notify_with_multiplier_3_triples_trade_amount(
+    def test_notify_with_multiplier_3_triples_shares(
         self, mock_order_args, mock_clob_client
     ):
-        """Verify notify with multiplier=3.0 triples the trade amount."""
+        """Verify notify with multiplier=3.0 triples the base shares."""
         mock_client_instance = MagicMock()
         mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
         mock_client_instance.create_order.return_value = MagicMock()
@@ -1082,7 +1095,7 @@ class TestTradeExecutorMultiplierAppliedSizing:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=50.0,
+            trade_base_shares=5.0,
         )
         executor = TradeExecutor(config)
 
@@ -1099,9 +1112,9 @@ class TestTradeExecutorMultiplierAppliedSizing:
 
         mock_order_args.assert_called_once()
         call_kwargs = mock_order_args.call_args[1]
-        # $50.00 * 3.0 / $0.90 = 166.67 shares
-        expected_shares = (50.0 * 3.0) / config.limit_price
-        assert abs(call_kwargs["size"] - expected_shares) < 0.01
+        # 5.0 base shares * 3.0 multiplier = 15.0 shares
+        expected_shares = config.trade_base_shares * 3.0
+        assert call_kwargs["size"] == expected_shares
 
     @patch("src.trading.executor.ClobClient")
     @patch("src.trading.executor.OrderArgs")
@@ -1116,7 +1129,7 @@ class TestTradeExecutorMultiplierAppliedSizing:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=30.0,
+            trade_base_shares=4.0,
         )
         executor = TradeExecutor(config)
 
@@ -1133,9 +1146,9 @@ class TestTradeExecutorMultiplierAppliedSizing:
 
         mock_order_args.assert_called_once()
         call_kwargs = mock_order_args.call_args[1]
-        # $30.00 * 1.5 / $0.90 = 50.00 shares
-        expected_shares = (30.0 * 1.5) / config.limit_price
-        assert abs(call_kwargs["size"] - expected_shares) < 0.01
+        # 4.0 base shares * 1.5 multiplier = 6.0 shares
+        expected_shares = config.trade_base_shares * 1.5
+        assert call_kwargs["size"] == expected_shares
 
     @patch("src.trading.executor.ClobClient")
     def test_notify_multiplier_with_disabled_trading_returns_true(self, mock_clob_client):
@@ -1157,21 +1170,21 @@ class TestTradeExecutorMultiplierAppliedSizing:
 
     @patch("src.trading.executor.ClobClient")
     @patch("src.trading.executor.OrderArgs")
-    def test_multiplier_applied_to_different_base_amounts(
+    def test_multiplier_applied_to_different_base_shares(
         self, mock_order_args, mock_clob_client
     ):
-        """Verify multiplier works correctly with various base trade amounts."""
+        """Verify multiplier works correctly with various base share amounts."""
         mock_client_instance = MagicMock()
         mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
         mock_client_instance.create_order.return_value = MagicMock()
         mock_client_instance.post_order.return_value = {"orderID": "12345"}
         mock_clob_client.return_value = mock_client_instance
 
-        # Test with $10 base amount and 2x multiplier
+        # Test with 5 base shares and 2x multiplier
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=10.0,
+            trade_base_shares=5.0,
         )
         executor = TradeExecutor(config)
 
@@ -1188,9 +1201,9 @@ class TestTradeExecutorMultiplierAppliedSizing:
 
         mock_order_args.assert_called_once()
         call_kwargs = mock_order_args.call_args[1]
-        # $10.00 * 2.0 / $0.90 = 22.22 shares
-        expected_shares = (10.0 * 2.0) / config.limit_price
-        assert abs(call_kwargs["size"] - expected_shares) < 0.01
+        # 5.0 base shares * 2.0 multiplier = 10.0 shares
+        expected_shares = config.trade_base_shares * 2.0
+        assert call_kwargs["size"] == expected_shares
 
     @patch("src.trading.executor.ClobClient")
     @patch("src.trading.executor.OrderArgs")
@@ -1207,7 +1220,7 @@ class TestTradeExecutorMultiplierAppliedSizing:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=25.0,
+            trade_base_shares=6.0,
         )
         executor = TradeExecutor(config)
 
@@ -1225,9 +1238,9 @@ class TestTradeExecutorMultiplierAppliedSizing:
 
         mock_order_args.assert_called_once()
         call_kwargs = mock_order_args.call_args[1]
-        # $25.00 * 2.0 / $0.90 = 55.56 shares
-        expected_shares = (25.0 * 2.0) / config.limit_price
-        assert abs(call_kwargs["size"] - expected_shares) < 0.01
+        # 6.0 base shares * 2.0 multiplier = 12.0 shares
+        expected_shares = config.trade_base_shares * 2.0
+        assert call_kwargs["size"] == expected_shares
 
 
 class TestTradeExecutorImmediateFillHandling:
@@ -1241,13 +1254,13 @@ class TestTradeExecutorImmediateFillHandling:
         mock_client_instance.create_order.return_value = MagicMock()
         mock_client_instance.get_address.return_value = "0x1234567890abcdef"
         # Response indicates immediate match with full fill
-        # Order size = $20 / $0.90 limit = 22.222... shares
+        # Order size = 3.0 base shares * 1.0 multiplier = 3.0 shares
         # takingAmount must be >= order size for FILLED status
         mock_client_instance.post_order.return_value = {
             "orderID": "0x1696f07adc0bc4342ea26b8ce0b3bb552fab2be255d5cc66c31f6b2a1463d186",
             "status": "matched",
-            "takingAmount": "22.23",  # Slightly more than order to ensure FILLED
-            "makingAmount": "20.01",
+            "takingAmount": "3.0",  # Matches order size for FILLED status
+            "makingAmount": "2.70",  # 3.0 shares * $0.90 limit = $2.70
             "success": True,
         }
         mock_clob_client.return_value = mock_client_instance
@@ -1266,7 +1279,7 @@ class TestTradeExecutorImmediateFillHandling:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config, repository=mock_repository)
 
@@ -1290,8 +1303,8 @@ class TestTradeExecutorImmediateFillHandling:
         from decimal import Decimal
 
         assert trade_arg.status == TradeStatus.FILLED
-        assert trade_arg.filled_quantity == Decimal("22.23")
-        # avg_fill_price = makingAmount / takingAmount = 20.01 / 22.23 ≈ 0.9
+        assert trade_arg.filled_quantity == Decimal("3.0")
+        # avg_fill_price = makingAmount / takingAmount = 2.70 / 3.0 = 0.9
         assert trade_arg.avg_fill_price is not None
         assert abs(trade_arg.avg_fill_price - Decimal("0.9")) < Decimal("0.01")
         assert trade_arg.filled_at is not None
@@ -1303,12 +1316,12 @@ class TestTradeExecutorImmediateFillHandling:
         mock_client_instance.create_or_derive_api_creds.return_value = {"key": "value"}
         mock_client_instance.create_order.return_value = MagicMock()
         mock_client_instance.get_address.return_value = "0x1234567890abcdef"
-        # Response indicates partial match (10 filled out of 22.22 ordered)
+        # Response indicates partial match (1.5 filled out of 3.0 ordered)
         mock_client_instance.post_order.return_value = {
             "orderID": "0xabc123",
             "status": "matched",
-            "takingAmount": "10.0",
-            "makingAmount": "9.0",
+            "takingAmount": "1.5",
+            "makingAmount": "1.35",
             "success": True,
         }
         mock_clob_client.return_value = mock_client_instance
@@ -1326,7 +1339,7 @@ class TestTradeExecutorImmediateFillHandling:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config, repository=mock_repository)
 
@@ -1348,7 +1361,7 @@ class TestTradeExecutorImmediateFillHandling:
         from decimal import Decimal
 
         assert trade_arg.status == TradeStatus.PARTIALLY_FILLED
-        assert trade_arg.filled_quantity == Decimal("10.0")
+        assert trade_arg.filled_quantity == Decimal("1.5")
 
     @patch("src.trading.executor.ClobClient")
     def test_no_match_creates_open_trade(self, mock_clob_client):
@@ -1378,7 +1391,7 @@ class TestTradeExecutorImmediateFillHandling:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         executor = TradeExecutor(config, repository=mock_repository)
 
@@ -1413,8 +1426,8 @@ class TestTradeExecutorImmediateFillHandling:
         mock_client_instance.post_order.return_value = {
             "orderID": "0xabc123",
             "status": "matched",
-            "takingAmount": "22.22",
-            "makingAmount": "20.00",
+            "takingAmount": "3.0",
+            "makingAmount": "2.70",
             "success": True,
         }
         mock_clob_client.return_value = mock_client_instance
@@ -1422,7 +1435,7 @@ class TestTradeExecutorImmediateFillHandling:
         config = Config(
             auto_trade_enabled=True,
             private_key="test_key",
-            trade_amount_usd=20.0,
+            trade_base_shares=3.0,
         )
         # No repository provided
         executor = TradeExecutor(config)

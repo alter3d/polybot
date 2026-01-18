@@ -86,8 +86,8 @@ class TradeExecutor(BaseNotifier):
     Follows the same notification pattern as ConsoleNotifier for
     seamless integration with the monitoring pipeline.
 
-    When enabled, automatically places limit orders at $0.99 for
-    the configured dollar amount when opportunities are detected.
+    When enabled, automatically places limit orders at the configured
+    limit buy price for the configured base share quantity.
 
     Attributes:
         _config: Application configuration with trading parameters.
@@ -132,10 +132,10 @@ class TradeExecutor(BaseNotifier):
             )
             return
 
-        if config.trade_amount_usd <= 0:
+        if config.trade_base_shares <= 0:
             logger.error(
-                "Invalid trade amount: $%.2f - trading disabled",
-                config.trade_amount_usd,
+                "Invalid base shares: %.2f - trading disabled",
+                config.trade_base_shares,
             )
             return
 
@@ -143,12 +143,10 @@ class TradeExecutor(BaseNotifier):
         try:
             self._initialize_client()
             self._enabled = True
-            shares = self._calculate_shares(config.trade_amount_usd)
             logger.info(
-                "TradeExecutor initialized: $%.2f per trade (%.2f shares @ $%.2f)",
-                config.trade_amount_usd,
-                shares,
-                self._config.limit_price,
+                "TradeExecutor initialized: %.2f base shares @ $%.2f limit",
+                config.trade_base_shares,
+                self._config.limit_buy_price,
             )
         except Exception as e:
             logger.error("Failed to initialize trading client: %s", e)
@@ -210,22 +208,23 @@ class TradeExecutor(BaseNotifier):
 
         logger.debug("CLOB client authenticated successfully")
 
-    def _calculate_shares(self, amount_usd: float) -> float:
-        """Calculate the number of shares for a given dollar amount.
+    def _calculate_shares(self, multiplier: float = 1.0) -> float:
+        """Calculate the number of shares for a trade with optional multiplier.
 
-        Shares are calculated based on the configured limit price and rounded
+        Shares are calculated from the configured base shares and multiplied
+        by the given multiplier (for reversal trades). The result is rounded
         to 2 decimal places to match exchange precision. The Polymarket CLOB
         rounds share quantities, so we round before submission to ensure
         consistency between our stored quantity and the exchange's fill amounts.
 
         Args:
-            amount_usd: Dollar amount to invest.
+            multiplier: Position size multiplier (default 1.0, higher for reversals).
 
         Returns:
             Number of shares to purchase, rounded to 2 decimals
-            (e.g., $5 / $0.99 = 5.05 shares, not 5.050505...).
+            (e.g., 3.0 base shares * 1.5x multiplier = 4.50 shares).
         """
-        shares = amount_usd / self._config.limit_price
+        shares = self._config.trade_base_shares * multiplier
         # Round to 2 decimal places to match exchange precision
         return round(shares, 2)
 
@@ -419,8 +418,9 @@ class TradeExecutor(BaseNotifier):
     def _execute_trade(self, opportunity: Opportunity, multiplier: float = 1.0) -> bool:
         """Execute a trade for the given opportunity.
 
-        Creates and submits a limit order at $0.99 for the configured
-        dollar amount. Implements retry logic for transient errors.
+        Creates and submits a limit order at the configured limit buy price
+        for the configured base share quantity. Implements retry logic for
+        transient errors.
 
         Args:
             opportunity: The opportunity to trade on.
@@ -440,9 +440,8 @@ class TradeExecutor(BaseNotifier):
             )
             return False
 
-        # Apply multiplier to base trade amount
-        effective_amount = self._config.trade_amount_usd * multiplier
-        shares = self._calculate_shares(effective_amount)
+        # Calculate shares with multiplier applied to base shares
+        shares = self._calculate_shares(multiplier)
 
         # Validate order parameters
         if shares <= 0:
@@ -457,13 +456,12 @@ class TradeExecutor(BaseNotifier):
         # Log with multiplier info when scaling is applied
         if multiplier > 1.0:
             logger.info(
-                "Executing trade: %s %s @ $%.2f (%.2f shares, $%.2f = $%.2f × %.1fx) for %s (neg_risk=%s)",
+                "Executing trade: %s %s @ $%.2f (%.2f shares = %.2f × %.1fx) for %s (neg_risk=%s)",
                 "BUY",
                 opportunity.side,
-                self._config.limit_price,
+                self._config.limit_buy_price,
                 shares,
-                effective_amount,
-                self._config.trade_amount_usd,
+                self._config.trade_base_shares,
                 multiplier,
                 token_display,
                 opportunity.neg_risk,
@@ -473,7 +471,7 @@ class TradeExecutor(BaseNotifier):
                 "Executing trade: %s %s @ $%.2f (%.2f shares) for %s (neg_risk=%s)",
                 "BUY",
                 opportunity.side,
-                self._config.limit_price,
+                self._config.limit_buy_price,
                 shares,
                 token_display,
                 opportunity.neg_risk,
@@ -544,7 +542,7 @@ class TradeExecutor(BaseNotifier):
         # Create order arguments
         order_args = OrderArgs(
             token_id=token_id,
-            price=self._config.limit_price,
+            price=self._config.limit_buy_price,
             size=shares,
             side="BUY",
         )
@@ -689,7 +687,7 @@ class TradeExecutor(BaseNotifier):
                 side=trade_side,
                 order_type=OrderSide.BUY,
                 quantity=Decimal(str(shares)),
-                limit_price=Decimal(str(self._config.limit_price)),
+                limit_price=Decimal(str(self._config.limit_buy_price)),
                 order_id=order_id,
                 neg_risk=opportunity.neg_risk,
                 filled_quantity=filled_quantity,

@@ -1,25 +1,25 @@
 {
   "active": true,
-  "spec": "017-implement-trade-tracking-using-our-recently-added-",
+  "spec": "019-change-our-trading-algorithm-so-that-instead-of-ca",
   "state": "building",
   "subtasks": {
-    "completed": 16,
-    "total": 20,
+    "completed": 4,
+    "total": 8,
     "in_progress": 1,
     "failed": 0
   },
   "phase": {
-    "current": "Main Application Integration",
+    "current": "Environment and Documentation",
     "id": null,
-    "total": 4
+    "total": 2
   },
   "workers": {
     "active": 0,
     "max": 1
   },
   "session": {
-    "number": 15,
-    "started_at": "2026-01-15T03:55:51.174268"
+    "number": 5,
+    "started_at": "2026-01-17T19:36:17.112152"
   },
-  "last_update": "2026-01-15T04:31:04.307962"
+  "last_update": "2026-01-17T19:48:05.269119"
 }

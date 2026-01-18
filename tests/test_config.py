@@ -49,10 +49,10 @@ class TestConfigDefaults:
         config = Config()
         assert config.series_ids == []
 
-    def test_default_trade_amount_usd(self):
-        """Verify default trade amount is $20.00."""
+    def test_default_trade_base_shares(self):
+        """Verify default trade base shares is 3.0."""
         config = Config()
-        assert config.trade_amount_usd == 20.0
+        assert config.trade_base_shares == 3.0
 
     def test_default_auto_trade_enabled(self):
         """Verify auto trade is disabled by default."""
@@ -79,10 +79,10 @@ class TestConfigDefaults:
         config = Config()
         assert config.reversal_multiplier == 1.5
 
-    def test_default_limit_price(self):
-        """Verify default limit price is 0.90."""
+    def test_default_limit_buy_price(self):
+        """Verify default limit buy price is 0.90."""
         config = Config()
-        assert config.limit_price == 0.90
+        assert config.limit_buy_price == 0.90
 
 
 class TestConfigFromEnv:
@@ -97,7 +97,8 @@ class TestConfigFromEnv:
             assert config.log_level == "INFO"
             assert config.series_ids == []
             assert config.reversal_multiplier == 1.5
-            assert config.limit_price == 0.90
+            assert config.limit_buy_price == 0.90
+            assert config.trade_base_shares == 3.0
 
     def test_from_env_opportunity_threshold_override(self):
         """Verify OPPORTUNITY_THRESHOLD env var overrides default."""
@@ -161,18 +162,18 @@ class TestConfigFromEnv:
             config = Config.from_env()
             assert config.series_ids == []
 
-    def test_from_env_trade_amount_usd_override(self):
-        """Verify TRADE_AMOUNT_USD env var overrides default."""
-        with patch.dict(os.environ, {"TRADE_AMOUNT_USD": "50.0"}, clear=True):
+    def test_from_env_trade_base_shares_override(self):
+        """Verify TRADE_BASE_SHARES env var overrides default."""
+        with patch.dict(os.environ, {"TRADE_BASE_SHARES": "5.0"}, clear=True):
             config = Config.from_env()
-            assert config.trade_amount_usd == 50.0
+            assert config.trade_base_shares == 5.0
 
-    def test_from_env_trade_amount_usd_float_conversion(self):
-        """Verify trade_amount_usd is correctly converted to float."""
-        with patch.dict(os.environ, {"TRADE_AMOUNT_USD": "25.50"}, clear=True):
+    def test_from_env_trade_base_shares_float_conversion(self):
+        """Verify trade_base_shares is correctly converted to float."""
+        with patch.dict(os.environ, {"TRADE_BASE_SHARES": "2.50"}, clear=True):
             config = Config.from_env()
-            assert isinstance(config.trade_amount_usd, float)
-            assert config.trade_amount_usd == 25.50
+            assert isinstance(config.trade_base_shares, float)
+            assert config.trade_base_shares == 2.50
 
     def test_from_env_auto_trade_enabled_true(self):
         """Verify AUTO_TRADE_ENABLED=true enables trading."""
@@ -226,14 +227,14 @@ class TestConfigFromEnv:
     def test_from_env_trading_multiple_overrides(self):
         """Verify multiple trading env vars can be set simultaneously."""
         env_vars = {
-            "TRADE_AMOUNT_USD": "100.0",
+            "TRADE_BASE_SHARES": "10.0",
             "AUTO_TRADE_ENABLED": "true",
             "PRIVATE_KEY": "0xdeadbeef",
             "SIGNATURE_TYPE": "1",
         }
         with patch.dict(os.environ, env_vars, clear=True):
             config = Config.from_env()
-            assert config.trade_amount_usd == 100.0
+            assert config.trade_base_shares == 10.0
             assert config.auto_trade_enabled is True
             assert config.private_key == "0xdeadbeef"
             assert config.signature_type == 1
@@ -268,18 +269,18 @@ class TestConfigFromEnv:
             assert isinstance(config.reversal_multiplier, float)
             assert config.reversal_multiplier == 2.5
 
-    def test_from_env_limit_price_override(self):
-        """Verify LIMIT_PRICE env var overrides default."""
-        with patch.dict(os.environ, {"LIMIT_PRICE": "0.85"}, clear=True):
+    def test_from_env_limit_buy_price_override(self):
+        """Verify LIMIT_BUY_PRICE env var overrides default."""
+        with patch.dict(os.environ, {"LIMIT_BUY_PRICE": "0.85"}, clear=True):
             config = Config.from_env()
-            assert config.limit_price == 0.85
+            assert config.limit_buy_price == 0.85
 
-    def test_from_env_limit_price_float_conversion(self):
-        """Verify limit_price is correctly converted to float."""
-        with patch.dict(os.environ, {"LIMIT_PRICE": "0.95"}, clear=True):
+    def test_from_env_limit_buy_price_float_conversion(self):
+        """Verify limit_buy_price is correctly converted to float."""
+        with patch.dict(os.environ, {"LIMIT_BUY_PRICE": "0.95"}, clear=True):
             config = Config.from_env()
-            assert isinstance(config.limit_price, float)
-            assert config.limit_price == 0.95
+            assert isinstance(config.limit_buy_price, float)
+            assert config.limit_buy_price == 0.95
 
 
 class TestConfigDataclass:
@@ -321,12 +322,12 @@ class TestConfigDataclass:
     def test_config_custom_trading_values(self):
         """Verify Config can be instantiated with custom trading values."""
         config = Config(
-            trade_amount_usd=50.0,
+            trade_base_shares=5.0,
             auto_trade_enabled=True,
             private_key="0xabc123",
             signature_type=2,
         )
-        assert config.trade_amount_usd == 50.0
+        assert config.trade_base_shares == 5.0
         assert config.auto_trade_enabled is True
         assert config.private_key == "0xabc123"
         assert config.signature_type == 2
@@ -345,10 +346,10 @@ class TestConfigDataclass:
         config = Config(reversal_multiplier=2.5)
         assert config.reversal_multiplier == 2.5
 
-    def test_config_custom_limit_price(self):
-        """Verify Config can be instantiated with custom limit_price."""
-        config = Config(limit_price=0.85)
-        assert config.limit_price == 0.85
+    def test_config_custom_limit_buy_price(self):
+        """Verify Config can be instantiated with custom limit_buy_price."""
+        config = Config(limit_buy_price=0.85)
+        assert config.limit_buy_price == 0.85
 
     def test_config_equality(self):
         """Verify two Config instances with same values are equal."""
@@ -399,21 +400,21 @@ class TestConfigEdgeCases:
             with pytest.raises(ValueError):
                 Config.from_env()
 
-    def test_from_env_trade_amount_zero(self):
-        """Verify zero trade amount is valid."""
-        with patch.dict(os.environ, {"TRADE_AMOUNT_USD": "0.0"}, clear=True):
+    def test_from_env_trade_base_shares_zero(self):
+        """Verify zero trade base shares is valid."""
+        with patch.dict(os.environ, {"TRADE_BASE_SHARES": "0.0"}, clear=True):
             config = Config.from_env()
-            assert config.trade_amount_usd == 0.0
+            assert config.trade_base_shares == 0.0
 
-    def test_from_env_trade_amount_large(self):
-        """Verify large trade amounts are valid."""
-        with patch.dict(os.environ, {"TRADE_AMOUNT_USD": "10000.0"}, clear=True):
+    def test_from_env_trade_base_shares_large(self):
+        """Verify large trade base shares are valid."""
+        with patch.dict(os.environ, {"TRADE_BASE_SHARES": "1000.0"}, clear=True):
             config = Config.from_env()
-            assert config.trade_amount_usd == 10000.0
+            assert config.trade_base_shares == 1000.0
 
-    def test_from_env_trade_amount_invalid_raises_error(self):
-        """Verify invalid trade amount value raises ValueError."""
-        with patch.dict(os.environ, {"TRADE_AMOUNT_USD": "not-a-number"}, clear=True):
+    def test_from_env_trade_base_shares_invalid_raises_error(self):
+        """Verify invalid trade base shares value raises ValueError."""
+        with patch.dict(os.environ, {"TRADE_BASE_SHARES": "not-a-number"}, clear=True):
             with pytest.raises(ValueError):
                 Config.from_env()
 
@@ -440,7 +441,7 @@ class TestConfigEdgeCases:
         with patch.dict(os.environ, {"OPPORTUNITY_THRESHOLD": "0.60"}, clear=True):
             config = Config.from_env()
             # Should still have default trading params
-            assert config.trade_amount_usd == 20.0
+            assert config.trade_base_shares == 3.0
             assert config.auto_trade_enabled is False
             assert config.private_key == ""
             assert config.signature_type == 0
@@ -470,20 +471,20 @@ class TestConfigEdgeCases:
             with pytest.raises(ValueError):
                 Config.from_env()
 
-    def test_from_env_limit_price_zero(self):
-        """Verify zero limit price is valid."""
-        with patch.dict(os.environ, {"LIMIT_PRICE": "0.0"}, clear=True):
+    def test_from_env_limit_buy_price_zero(self):
+        """Verify zero limit buy price is valid."""
+        with patch.dict(os.environ, {"LIMIT_BUY_PRICE": "0.0"}, clear=True):
             config = Config.from_env()
-            assert config.limit_price == 0.0
+            assert config.limit_buy_price == 0.0
 
-    def test_from_env_limit_price_one(self):
-        """Verify limit price of 1.0 (100%) is valid."""
-        with patch.dict(os.environ, {"LIMIT_PRICE": "1.0"}, clear=True):
+    def test_from_env_limit_buy_price_one(self):
+        """Verify limit buy price of 1.0 (100%) is valid."""
+        with patch.dict(os.environ, {"LIMIT_BUY_PRICE": "1.0"}, clear=True):
             config = Config.from_env()
-            assert config.limit_price == 1.0
+            assert config.limit_buy_price == 1.0
 
-    def test_from_env_limit_price_invalid_raises_error(self):
-        """Verify invalid limit price value raises ValueError."""
-        with patch.dict(os.environ, {"LIMIT_PRICE": "not-a-number"}, clear=True):
+    def test_from_env_limit_buy_price_invalid_raises_error(self):
+        """Verify invalid limit buy price value raises ValueError."""
+        with patch.dict(os.environ, {"LIMIT_BUY_PRICE": "not-a-number"}, clear=True):
             with pytest.raises(ValueError):
                 Config.from_env()
