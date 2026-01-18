@@ -33,7 +33,8 @@ def map_clob_status_to_trade_status(
     """Map a CLOB API order status to a TradeStatus enum.
 
     Args:
-        clob_status: Status string from CLOB API (LIVE, MATCHED, CANCELLED).
+        clob_status: Status string from CLOB API (LIVE, MATCHED, CANCELLED,
+            CANCELED_MARKET_RESOLVED).
         size_matched: Amount filled so far (optional, for partial fill detection).
         original_size: Original order size (optional, for partial fill detection).
 
@@ -46,6 +47,9 @@ def map_clob_status_to_trade_status(
         return TradeStatus.OPEN
 
     if status_upper == "CANCELLED":
+        return TradeStatus.CANCELLED
+
+    if status_upper == "CANCELED_MARKET_RESOLVED":
         return TradeStatus.CANCELLED
 
     if status_upper == "MATCHED":
